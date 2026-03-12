@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+  # ─── API ZKP Backend ────────────────────────────────────────────────────────
+  zkp-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.zkp
+    container_name: zkp-api
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=sqlite:////app/data/zkp_credentials.db
+      - JWT_SECRET=${JWT_SECRET:-CHANGE_ME_IN_PRODUCTION_USE_256BIT_KEY}
+      - DEBUG=${DEBUG:-false}
+    volumes:
+      - zkp_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - zkp-network
+
+  # ─── Frontend Streamlit ─────────────────────────────────────────────────────
+  zkp-frontend:
+    image: python:3.12-slim
+    container_name: zkp-frontend
+    working_dir: /app
+    command: >
+      bash -c "pip install -q streamlit requests cryptography &&
+               streamlit run frontend/zkp_dashboard.py --server.port 8502 --server.address 0.0.0.0"
+    ports:
+      - "8502:8502"
+    environment:
+      - ZKP_API_URL=http://zkp-api:8001
+    volumes:
+      - ./frontend:/app/frontend
+    depends_on:
+      - zkp-api
+    networks:
+      - zkp-network
+
+volumes:
+  zkp_data:
+
+networks:
+  zkp-network:
+    driver: bridge
