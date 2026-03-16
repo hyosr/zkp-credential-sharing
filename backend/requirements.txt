@@ -6,3 +6,5 @@ python-jose[cryptography]==3.3.0
 cryptography==44.0.0
 python-multipart==0.0.20
 httpx==0.28.1
+pytest
+playwright

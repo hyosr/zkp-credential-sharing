@@ -13,6 +13,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.models.database import create_tables
 from backend.routers import auth, credentials, sharing
+from backend.routers import keycloak_sharing  # <-- add
 
 
 @asynccontextmanager
@@ -56,7 +57,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(credentials.router)
 app.include_router(sharing.router)
-
+app.include_router(keycloak_sharing.router)  # <-- add
 
 @app.get("/")
 def root():

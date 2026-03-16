@@ -20,6 +20,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from backend.schemas.sharing import RelayLoginRequest
+from backend.crypto.encryption import ShareEncryptor
+from backend.relay.playwright_relay import login_and_get_cookies
+
 from backend.crypto.encryption import ShareEncryptor
 from backend.crypto.token_manager import (
     generate_share_token,
@@ -29,6 +33,10 @@ from backend.crypto.token_manager import (
 )
 from backend.models.database import Credential, SharedAccess, User, get_db
 from backend.routers.auth import get_current_user
+
+
+from pydantic import BaseModel
+
 
 router = APIRouter(prefix="/sharing", tags=["Secure Sharing"])
 
@@ -56,6 +64,30 @@ class AccessShareRequest(BaseModel):
 
 class RevokeRequest(BaseModel):
     token_hash_preview: str             # Premier 8 chars du hash (depuis list_tokens)
+
+
+
+class ShareIntentRequest(BaseModel):
+    credential_id: int
+    recipient_email: str
+    permission: str = "read_once"
+    ttl_hours: int = 24
+    max_uses: int = 1
+
+class ShareIntentResponse(BaseModel):
+    message: str
+    share_token: str
+    share_id: int
+    expires_at: float
+    recipient: str
+    permission: str
+
+class ShareFinalizeRequest(BaseModel):
+    token: str
+    encrypted_payload: str  # JSON {nonce,ciphertext}
+
+
+
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -100,6 +132,7 @@ def create_share(
         recipient_email=req.recipient_email,
         token_hash=token_hash,
         encrypted_payload=req.encrypted_payload,
+        share_key=req.share_key_token, 
         permission=req.permission,
         max_uses=req.max_uses,
         expires_at=time.time() + req.ttl_hours * 3600,
@@ -172,7 +205,8 @@ def access_share(
         "username": cred.username if cred else None,
         "encrypted_payload": shared.encrypted_payload,
         # Le destinataire déchiffre avec son token (clé éphémère)
-        "decryption_key": req.token,
+        # "decryption_key": req.token,
+        "decryption_key": shared.share_key,
         "permission": shared.permission,
         "message": "Accès autorisé — déchiffrez localement avec le token fourni",
     }
@@ -253,3 +287,190 @@ def get_audit_log(
         "is_revoked": shared.is_revoked,
         "access_log": log,
     }
+
+
+@router.post("/relay-login")
+def relay_login(
+    req: RelayLoginRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Secure Login Relay:
+    - Recipient provides share token + requester_email
+    - Server validates token (zero-trust) + retrieves encrypted payload
+    - Server decrypts payload using the token (one-time key)
+    - Server performs login to target service using Playwright
+    - Returns cookies (session) to recipient
+    Recipient never sees the password.
+    """
+    share_info = validate_and_consume_token(req.token, req.requester_email)
+    if not share_info:
+        raise HTTPException(status_code=403, detail="Token invalide, expiré, ou email non autorisé")
+
+    token_hash = hashlib.sha256(req.token.encode()).hexdigest()
+    shared = db.query(SharedAccess).filter(
+        SharedAccess.token_hash == token_hash,
+        SharedAccess.is_revoked == False,
+    ).first()
+
+    if not shared:
+        raise HTTPException(status_code=404, detail="Partage non trouvé")
+
+    if time.time() > shared.expires_at:
+        raise HTTPException(status_code=403, detail="Partage expiré")
+
+    # Fetch credential metadata
+    cred = db.query(Credential).filter(Credential.id == shared.credential_id).first()
+    if not cred:
+        raise HTTPException(status_code=404, detail="Credential non trouvé")
+
+    service_url = req.service_url_override or (cred.service_url or "")
+    if not service_url:
+        raise HTTPException(status_code=400, detail="service_url missing on credential")
+
+    # decrypt payload (expect it contains JSON with at least "password")
+    try:
+        encrypted_data = json.loads(shared.encrypted_payload)
+    except Exception:
+        raise HTTPException(status_code=400, detail="encrypted_payload must be JSON string {nonce,ciphertext}")
+
+    try:
+        plaintext = ShareEncryptor.decrypt_from_share(encrypted_data, req.token)
+        payload = json.loads(plaintext) if plaintext.strip().startswith("{") else {"password": plaintext}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Cannot decrypt share payload: {e}")
+
+    password = payload.get("password")
+    if not password:
+        raise HTTPException(status_code=400, detail="Share payload missing 'password'")
+
+    relay_profile = payload.get("relay_profile") or {}  # allow embedding it in plaintext
+    # Optional: if you stored relay_profile elsewhere, merge here.
+
+    try:
+        result = login_and_get_cookies(
+            service_url=service_url,
+            username=cred.username or req.requester_email,
+            password=password,
+            profile=relay_profile,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Relay login failed: {e}")
+
+    # Audit + one-time revoke logic
+    shared.use_count += 1
+    shared.used_at = time.time()
+    ip = request.client.host if request.client else "unknown"
+    ua = request.headers.get("user-agent", "unknown")
+    shared.add_access_log_entry(ip, ua)
+
+    if shared.permission == "read_once" and shared.use_count >= shared.max_uses:
+        shared.is_revoked = True
+        shared.revoked_at = time.time()
+
+    db.commit()
+
+    return {
+        "credential_name": cred.name,
+        "service_url": service_url,
+        "username": cred.username,
+        "relay": {
+            "current_url": result.get("current_url"),
+            "title": result.get("title"),
+            "used_selectors": result.get("used_selectors"),
+        },
+        # cookies returned to set in browser/client
+        "cookies": result.get("cookies", []),
+        "message": "Relay login done. Recipient never received the password.",
+    }
+
+
+
+@router.post("/create-intent", response_model=ShareIntentResponse)
+def create_share_intent(
+    req: ShareIntentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Vérification propriétaire
+    cred = db.query(Credential).filter(
+        Credential.id == req.credential_id,
+        Credential.owner_id == current_user.id,
+        Credential.is_active == True,
+    ).first()
+    if not cred:
+        raise HTTPException(status_code=404, detail="Credential non trouvé")
+
+    # 1) Génère le token de partage (servira aussi de clé de chiffrement côté client)
+    share_token = generate_share_token(
+        credential_id=req.credential_id,
+        owner_id=current_user.id,
+        recipient_email=req.recipient_email,
+        permission=req.permission,
+        ttl_hours=req.ttl_hours,
+        max_uses=req.max_uses,
+    )
+    token_hash = hashlib.sha256(share_token.encode()).hexdigest()
+
+    # 2) Crée l'entrée DB mais sans payload pour l’instant
+    shared = SharedAccess(
+        credential_id=req.credential_id,
+        owner_id=current_user.id,
+        recipient_email=req.recipient_email,
+        token_hash=token_hash,
+        encrypted_payload="{}",  # placeholder
+        permission=req.permission,
+        max_uses=req.max_uses,
+        expires_at=time.time() + req.ttl_hours * 3600,
+        created_at=time.time(),
+    )
+    db.add(shared)
+    db.commit()
+    db.refresh(shared)
+
+    return {
+        "message": "Intent créé. Chiffrez localement avec share_token puis finalisez.",
+        "share_token": share_token,
+        "share_id": shared.id,
+        "expires_at": shared.expires_at,
+        "recipient": req.recipient_email,
+        "permission": req.permission,
+    }
+
+
+@router.post("/finalize")
+def finalize_share(
+    req: ShareFinalizeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Attache le encrypted_payload (déjà chiffré côté client avec le share_token) au share.
+    """
+    token_hash = hashlib.sha256(req.token.encode()).hexdigest()
+
+    shared = db.query(SharedAccess).filter(
+        SharedAccess.token_hash == token_hash,
+        SharedAccess.owner_id == current_user.id,
+        SharedAccess.is_revoked == False,
+    ).first()
+
+    if not shared:
+        raise HTTPException(status_code=404, detail="Partage non trouvé (ou déjà révoqué)")
+
+    if time.time() > shared.expires_at:
+        raise HTTPException(status_code=403, detail="Partage expiré")
+
+    # Validate payload format early
+    try:
+        d = json.loads(req.encrypted_payload)
+        if "nonce" not in d or "ciphertext" not in d:
+            raise ValueError("missing nonce/ciphertext")
+    except Exception:
+        raise HTTPException(status_code=400, detail="encrypted_payload must be JSON {nonce,ciphertext}")
+
+    shared.encrypted_payload = req.encrypted_payload
+    db.commit()
+
+    return {"message": "Partage finalisé. Envoyez le token au destinataire."}

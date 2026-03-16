@@ -113,6 +113,9 @@ class SharedAccess(Base):
     """
     __tablename__ = "shared_accesses"
 
+
+    share_key = Column(String, nullable=False)   # stocke la clé éphémère
+
     id = Column(Integer, primary_key=True, index=True)
     credential_id = Column(Integer, ForeignKey("credentials.id"), nullable=False)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
