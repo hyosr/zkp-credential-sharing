@@ -22,6 +22,7 @@ class ShareAccessRequest(BaseModel):
     requester_email: str
 
 
+
 class RelayLoginRequest(BaseModel):
     token: str
     requester_email: str

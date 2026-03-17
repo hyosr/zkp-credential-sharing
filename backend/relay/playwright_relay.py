@@ -44,64 +44,133 @@ def _first_visible(page, selectors):
             continue
     return None, None
 
-
-def login_and_get_cookies(
+async def login_and_get_cookies(
     service_url: str,
     username: str,
     password: str,
-    profile: Optional[Dict[str, Any]] = None,
+    profile: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
-    """
-    Opens the target login page, fills credentials, submits, returns cookies.
-    This does NOT guarantee login will succeed (2FA/CAPTCHA may block).
-    """
-    prof = dict(DEFAULT_PROFILE)
-    if profile:
-        # shallow merge
-        prof.update(profile)
+    from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context()
-        page = context.new_page()
+    if profile is None:
+        profile = {}
 
-        page.goto(service_url, wait_until="domcontentloaded")
+    username_selector = profile.get("username_selector", "input[type='email'], input[name='email']")
+    password_selector = profile.get("password_selector", "input[type='password']")
+    submit_selector = profile.get("submit_selector", "button[type='submit']")
+    # Augmenter le délai d'attente après soumission
+    post_login_wait = profile.get("post_login_wait", 5000)  # 5 secondes par défaut
 
-        user_el, user_sel = _first_visible(page, prof["username_selector_candidates"])
-        pass_el, pass_sel = _first_visible(page, prof["password_selector_candidates"])
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        try:
+            await page.goto(service_url, wait_until="networkidle")
 
-        if not user_el or not pass_el:
-            browser.close()
-            raise ValueError(
-                "Unable to find login inputs. Provide relay_profile selectors for this website."
-            )
+            # Attendre que les champs soient présents
+            await page.wait_for_selector(username_selector, timeout=10000)
+            await page.fill(username_selector, username)
 
-        user_el.fill(username.strip())
-        pass_el.fill(password)
+            await page.wait_for_selector(password_selector, timeout=5000)
+            await page.fill(password_selector, password)
 
-        submit_el, submit_sel = _first_visible(page, prof["submit_selector_candidates"])
-        if submit_el:
-            submit_el.click()
-        else:
-            # fallback: press Enter in password field
-            pass_el.press("Enter")
+            await page.wait_for_selector(submit_selector, timeout=5000)
+            await page.click(submit_selector)
 
-        page.wait_for_timeout(int(prof.get("post_login_wait_ms", 2500)))
+            # Attendre après soumission
+            # Soit un temps fixe, soit attendre que l'URL change
+            try:
+                # Attendre que l'URL ne soit plus l'URL de login (optionnel)
+                await page.wait_for_function(
+                    f"window.location.href !== '{service_url}'",
+                    timeout=post_login_wait
+                )
+            except PlaywrightTimeoutError:
+                # Si l'URL ne change pas, on attend juste un peu
+                await page.wait_for_timeout(post_login_wait)
 
-        cookies = context.cookies()
-        current_url = page.url
-        title = page.title()
+            # Attendre un état stable
+            await page.wait_for_load_state("networkidle")
 
-        browser.close()
+            # Récupérer les cookies
+            cookies = await page.context.cookies()
 
-        return {
-            "ok": True,
-            "current_url": current_url,
-            "title": title,
-            "cookies": cookies,
-            "used_selectors": {
-                "username": user_sel,
-                "password": pass_sel,
-                "submit": submit_sel,
-            },
-        }
+            # Optionnel : récupérer le localStorage si la session y est stockée
+            localStorage = await page.evaluate("() => JSON.stringify(window.localStorage)")
+
+            return {
+                "cookies": cookies,
+                "localStorage": localStorage if localStorage != "{}" else None,
+                "current_url": page.url,
+                "title": await page.title(),
+                "used_selectors": {
+                    "username": username_selector,
+                    "password": password_selector,
+                    "submit": submit_selector,
+                }
+            }
+        except Exception as e:
+            # En cas d'erreur, on peut prendre une capture d'écran pour debug
+            await page.screenshot(path="debug_login_failure.png")
+            raise Exception(f"Playwright login failed: {str(e)}")
+        finally:
+            await browser.close()
+
+
+
+
+
+# async def login_and_get_cookies(
+#     service_url: str,
+#     username: str,
+#     password: str,
+#     profile: Optional[Dict[str, Any]] = None
+# ) -> Dict[str, Any]:
+#     from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+
+#     if profile is None:
+#         profile = {}
+
+#     username_selector = profile.get("username_selector", "input[type='email'], input[name='email']")
+#     password_selector = profile.get("password_selector", "input[type='password']")
+#     submit_selector = profile.get("submit_selector", "button[type='submit']")
+#     post_login_wait = profile.get("post_login_wait", 0)
+
+#     async with async_playwright() as p:
+#         browser = await p.chromium.launch(headless=True)
+#         page = await browser.new_page()
+#         try:
+#             await page.goto(service_url, wait_until="networkidle")
+
+#             # Attendre que les champs soient présents avant de remplir
+#             await page.wait_for_selector(username_selector, timeout=10000)
+#             await page.fill(username_selector, username)
+
+#             await page.wait_for_selector(password_selector, timeout=5000)
+#             await page.fill(password_selector, password)
+
+#             await page.wait_for_selector(submit_selector, timeout=5000)
+#             await page.click(submit_selector)
+
+#             if post_login_wait > 0:
+#                 await page.wait_for_timeout(post_login_wait)
+#             else:
+#                 await page.wait_for_load_state("networkidle")
+
+#             cookies = await page.context.cookies()
+#             return {
+#                 "cookies": cookies,
+#                 "current_url": page.url,
+#                 "title": await page.title(),
+#                 "used_selectors": {
+#                     "username": username_selector,
+#                     "password": password_selector,
+#                     "submit": submit_selector,
+#                 }
+#             }
+#         except PlaywrightTimeoutError as e:
+#             raise Exception(f"Timeout en attendant les sélecteurs: {e}")
+#         except Exception as e:
+#             raise Exception(f"Playwright login failed: {str(e)}")
+#         finally:
+#             await browser.close()
