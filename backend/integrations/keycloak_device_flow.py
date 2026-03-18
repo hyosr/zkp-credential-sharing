@@ -27,18 +27,40 @@ class KeycloakDeviceFlow:
     def token_endpoint(self) -> str:
         return f"{self.base_url}/realms/{self.realm}/protocol/openid-connect/token"
 
-    def start(self, scope: str = "openid profile email") -> Dict[str, Any]:
-        """
-        Starts device flow; returns:
-          device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval
-        """
-        r = requests.post(
-            self.device_endpoint,
-            data={"client_id": self.client_id, "scope": scope},
-            timeout=15,
-        )
-        r.raise_for_status()
-        return r.json()
+    # def start(self, scope: str = "openid profile email") -> Dict[str, Any]:
+    #     """
+    #     Starts device flow; returns:
+    #       device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval
+    #     """
+    #     r = requests.post(
+    #         self.device_endpoint,
+    #         data={"client_id": self.client_id, "scope": scope},
+    #         timeout=15,
+    #     )
+    #     r.raise_for_status()
+    #     return r.json()
+
+
+    import requests
+
+    def start(self):
+        url = f"{self.base_url}/realms/{self.realm}/protocol/openid-connect/auth/device"
+        data = {
+            "client_id": self.client_id,
+            "scope": "openid",   # indispensable
+        }
+        resp = requests.post(url, data=data)
+        resp.raise_for_status()
+        return resp.json()
+
+
+
+
+
+
+
+
+
 
     def poll_for_token(self, device_code: str, interval: int = 5) -> Dict[str, Any]:
         """
