@@ -43,6 +43,7 @@ from pydantic import BaseModel
 
 from backend.models.database import get_db
 from backend.crypto.encryption import ShareEncryptor
+from frontend.dashboard import api_post, decrypt_from_share
 
 
 router = APIRouter(prefix="/sharing", tags=["Secure Sharing"])
@@ -164,7 +165,7 @@ class ShareRequest(BaseModel):
 
 class AccessShareRequest(BaseModel):
     token: str
-    requester_email: str
+    # requester_email: str
 
 
 class RevokeRequest(BaseModel):
@@ -257,19 +258,86 @@ def create_share(
     }
 
 
+# @router.post("/access")
+# def access_share(
+#     req: AccessShareRequest,
+#     request: Request,
+#     db: Session = Depends(get_db),
+# ):
+#     """
+#     Accès à un credential partagé via token one-time.
+#     Zero-Trust : vérifie l'email du demandeur à chaque accès.
+#     Retourne le blob chiffré (le destinataire le déchiffre avec le token).
+#     """
+#     # Validation Zero-Trust du token
+#     share_info = validate_and_consume_token(req.token, req.requester_email)
+#     if not share_info:
+#         raise HTTPException(
+#             status_code=403,
+#             detail="Token invalide, expiré, ou email non autorisé"
+#         )
+
+#     # Récupère le partage en base
+#     token_hash = hashlib.sha256(req.token.encode()).hexdigest()
+#     shared = db.query(SharedAccess).filter(
+#         SharedAccess.token_hash == token_hash,
+#         SharedAccess.is_revoked == False,
+#     ).first()
+#     if not shared:
+#         raise HTTPException(status_code=404, detail="Partage non trouvé")
+#     if time.time() > shared.expires_at:
+#         raise HTTPException(status_code=403, detail="Partage expiré")
+
+#     # Audit trail
+#     shared.use_count += 1
+#     shared.used_at = time.time()
+#     ip = request.client.host if request.client else "unknown"
+#     ua = request.headers.get("user-agent", "unknown")
+#     shared.add_access_log_entry(ip, ua)
+
+#     # Si one-time, invalide après usage
+#     if shared.permission == "read_once" and shared.use_count >= shared.max_uses:
+#         shared.is_revoked = True
+#         shared.revoked_at = time.time()
+
+#     db.commit()
+
+#     # Récupère infos du credential (sans le secret original)
+#     cred = db.query(Credential).filter(Credential.id == shared.credential_id).first()
+
+#     return {
+#         "credential_name": cred.name if cred else "Inconnu",
+#         "service_url": cred.service_url if cred else None,
+#         "username": cred.username if cred else None,
+#         "encrypted_payload": shared.encrypted_payload,
+#         # Le destinataire déchiffre avec son token (clé éphémère)
+#         # "decryption_key": req.token,
+#         "decryption_key": shared.share_key,
+#         "permission": shared.permission,
+#         "message": "Accès autorisé — déchiffrez localement avec le token fourni",
+#     }
+
+
+
+
+
+
 @router.post("/access")
 def access_share(
     req: AccessShareRequest,
     request: Request,
+    current_user: User = Depends(get_current_user),  # ✅ obligatoire
     db: Session = Depends(get_db),
 ):
     """
     Accès à un credential partagé via token one-time.
-    Zero-Trust : vérifie l'email du demandeur à chaque accès.
-    Retourne le blob chiffré (le destinataire le déchiffre avec le token).
+    Zero-Trust : le demandeur DOIT être connecté, et son email doit matcher recipient_email.
+    Retourne le blob chiffré (le destinataire le déchiffre avec la clé stockée).
     """
-    # Validation Zero-Trust du token
-    share_info = validate_and_consume_token(req.token, req.requester_email)
+    # ✅ Validation Zero-Trust: on utilise l'email du user connecté (pas de champ fourni par le client)
+    requester_email = current_user.email
+
+    share_info = validate_and_consume_token(req.token, requester_email)
     if not share_info:
         raise HTTPException(
             status_code=403,
@@ -286,6 +354,10 @@ def access_share(
         raise HTTPException(status_code=404, detail="Partage non trouvé")
     if time.time() > shared.expires_at:
         raise HTTPException(status_code=403, detail="Partage expiré")
+
+    # ✅ Double-check DB: email connecté doit matcher recipient_email (au cas où token_manager est reset)
+    if (shared.recipient_email or "").lower().strip() != (requester_email or "").lower().strip():
+        raise HTTPException(status_code=403, detail="Email non autorisé pour ce partage")
 
     # Audit trail
     shared.use_count += 1
@@ -309,12 +381,22 @@ def access_share(
         "service_url": cred.service_url if cred else None,
         "username": cred.username if cred else None,
         "encrypted_payload": shared.encrypted_payload,
-        # Le destinataire déchiffre avec son token (clé éphémère)
-        # "decryption_key": req.token,
         "decryption_key": shared.share_key,
         "permission": shared.permission,
         "message": "Accès autorisé — déchiffrez localement avec le token fourni",
     }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 @router.get("/my-shares")
@@ -394,10 +476,16 @@ def get_audit_log(
     }
 
 
+
+
 # @router.post("/relay-login")
 # def relay_login(
+#     # req: RelayLoginRequest,
+#     # request: Request,
+#     # db: Session = Depends(get_db),
 #     req: RelayLoginRequest,
 #     request: Request,
+#     current_user: User = Depends(get_current_user),  # ✅ obligatoire
 #     db: Session = Depends(get_db),
 # ):
 #     """
@@ -409,9 +497,14 @@ def get_audit_log(
 #     - Returns cookies (session) to recipient
 #     Recipient never sees the password.
 #     """
-#     share_info = validate_and_consume_token(req.token, req.requester_email)
+#     # share_info = validate_and_consume_token(req.token, req.requester_email)
+#     requester_email = current_user.email
+#     share_info = validate_and_consume_token(req.token, requester_email)
 #     if not share_info:
 #         raise HTTPException(status_code=403, detail="Token invalide, expiré, ou email non autorisé")
+
+
+   
 
 #     token_hash = hashlib.sha256(req.token.encode()).hexdigest()
 #     shared = db.query(SharedAccess).filter(
@@ -422,104 +515,11 @@ def get_audit_log(
 #     if not shared:
 #         raise HTTPException(status_code=404, detail="Partage non trouvé")
 
-#     if time.time() > shared.expires_at:
-#         raise HTTPException(status_code=403, detail="Partage expiré")
 
-#     # Fetch credential metadata
-#     cred = db.query(Credential).filter(Credential.id == shared.credential_id).first()
-#     if not cred:
-#         raise HTTPException(status_code=404, detail="Credential non trouvé")
-
-#     service_url = req.service_url_override or (cred.service_url or "")
-#     if not service_url:
-#         raise HTTPException(status_code=400, detail="service_url missing on credential")
-
-#     # decrypt payload (expect it contains JSON with at least "password")
-#     try:
-#         encrypted_data = json.loads(shared.encrypted_payload)
-#     except Exception:
-#         raise HTTPException(status_code=400, detail="encrypted_payload must be JSON string {nonce,ciphertext}")
-
-#     try:
-#         plaintext = ShareEncryptor.decrypt_from_share(encrypted_data, shared.share_key)
-#         payload = json.loads(plaintext) if plaintext.strip().startswith("{") else {"password": plaintext}
-#     except Exception as e:
-#         raise HTTPException(status_code=400, detail=f"Cannot decrypt share payload: {e}")
-
-#     password = payload.get("password")
-#     if not password:
-#         raise HTTPException(status_code=400, detail="Share payload missing 'password'")
-
-#     relay_profile = payload.get("relay_profile") or {}  # allow embedding it in plaintext
-#     # Optional: if you stored relay_profile elsewhere, merge here.
-
-#     try:
-#         result = login_and_get_cookies(
-#             service_url=service_url,
-#             username=cred.username or req.requester_email,
-#             password=password,
-#             profile=relay_profile,
-#         )
-#     except Exception as e:
-#         raise HTTPException(status_code=400, detail=f"Relay login failed: {e}")
-
-#     # Audit + one-time revoke logic
-#     shared.use_count += 1
-#     shared.used_at = time.time()
-#     ip = request.client.host if request.client else "unknown"
-#     ua = request.headers.get("user-agent", "unknown")
-#     shared.add_access_log_entry(ip, ua)
-
-#     if shared.permission == "read_once" and shared.use_count >= shared.max_uses:
-#         shared.is_revoked = True
-#         shared.revoked_at = time.time()
-
-#     db.commit()
-
-#     return {
-#         "credential_name": cred.name,
-#         "service_url": service_url,
-#         "username": cred.username,
-#         "relay": {
-#             "current_url": result.get("current_url"),
-#             "title": result.get("title"),
-#             "used_selectors": result.get("used_selectors"),
-#         },
-#         # cookies returned to set in browser/client
-#         "cookies": result.get("cookies", []),
-#         "message": "Relay login done. Recipient never received the password.",
-#     }
+#     if (shared.recipient_email or "").lower().strip() != (requester_email or "").lower().strip():
+#         raise HTTPException(status_code=403, detail="Email non autorisé pour ce partage")
 
 
-
-
-# @router.post("/relay-login")
-# def relay_login(
-#     req: RelayLoginRequest,
-#     request: Request,
-#     db: Session = Depends(get_db),
-# ):
-#     """
-#     Secure Login Relay:
-#     - Recipient provides share token + requester_email
-#     - Server validates token (zero-trust) + retrieves encrypted payload
-#     - Server decrypts payload using the token (one-time key)
-#     - Server performs login to target service using Playwright
-#     - Returns cookies (session) to recipient
-#     Recipient never sees the password.
-#     """
-#     share_info = validate_and_consume_token(req.token, req.requester_email)
-#     if not share_info:
-#         raise HTTPException(status_code=403, detail="Token invalide, expiré, ou email non autorisé")
-
-#     token_hash = hashlib.sha256(req.token.encode()).hexdigest()
-#     shared = db.query(SharedAccess).filter(
-#         SharedAccess.token_hash == token_hash,
-#         SharedAccess.is_revoked == False,
-#     ).first()
-
-#     if not shared:
-#         raise HTTPException(status_code=404, detail="Partage non trouvé")
 
 #     if time.time() > shared.expires_at:
 #         raise HTTPException(status_code=403, detail="Partage expiré")
@@ -561,7 +561,6 @@ def get_audit_log(
 
 #     try:
 #         # Exécuter le login (asynchrone, on utilise asyncio.run() car la route est synchrone)
-#         import asyncio
 #         result = asyncio.run(login_and_get_cookies(
 #             service_url=service_url,
 #             username=cred.username or req.requester_email,
@@ -595,6 +594,8 @@ def get_audit_log(
 #         },
 #         # cookies returned to set in browser/client
 #         "cookies": result.get("cookies", []),
+#         "localStorage": result.get("localStorage"),  # Ajouté
+
 #         "message": "Relay login done. Recipient never received the password.",
 #     }
 
@@ -602,32 +603,41 @@ def get_audit_log(
 
 
 
-
-
 @router.post("/relay-login")
-def relay_login(
+async def relay_login(
     req: RelayLoginRequest,
     request: Request,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
     Secure Login Relay:
-    - Recipient provides share token + requester_email
-    - Server validates token (zero-trust) + retrieves encrypted payload
-    - Server decrypts payload using the token (one-time key)
+    - Recipient provides share token
+    - Server requires requester to be authenticated (JWT) and uses current_user.email
+    - Server validates token + retrieves encrypted payload
+    - Server decrypts payload using the share_key stored in DB
     - Server performs login to target service using Playwright
     - Returns cookies (session) to recipient
-    Recipient never sees the password.
     """
-    share_info = validate_and_consume_token(req.token, req.requester_email)
+    requester_email = (current_user.email or "").strip().lower()
+    if not requester_email:
+        raise HTTPException(status_code=401, detail="Authenticated user email missing")
+
+    # 1) Validate token against authenticated email (zero-trust)
+    share_info = validate_and_consume_token(req.token, requester_email)
     if not share_info:
         raise HTTPException(status_code=403, detail="Token invalide, expiré, ou email non autorisé")
 
+    # 2) Load share from DB
     token_hash = hashlib.sha256(req.token.encode()).hexdigest()
-    shared = db.query(SharedAccess).filter(
-        SharedAccess.token_hash == token_hash,
-        SharedAccess.is_revoked == False,
-    ).first()
+    shared = (
+        db.query(SharedAccess)
+        .filter(
+            SharedAccess.token_hash == token_hash,
+            SharedAccess.is_revoked == False,
+        )
+        .first()
+    )
 
     if not shared:
         raise HTTPException(status_code=404, detail="Partage non trouvé")
@@ -635,16 +645,22 @@ def relay_login(
     if time.time() > shared.expires_at:
         raise HTTPException(status_code=403, detail="Partage expiré")
 
-    # Fetch credential metadata
+    # Extra DB-level check (important if in-memory token store resets)
+    shared_recipient = (shared.recipient_email or "").strip().lower()
+    if shared_recipient != requester_email:
+        raise HTTPException(status_code=403, detail="Email non autorisé pour ce partage")
+
+    # 3) Fetch credential metadata
     cred = db.query(Credential).filter(Credential.id == shared.credential_id).first()
     if not cred:
         raise HTTPException(status_code=404, detail="Credential non trouvé")
 
     service_url = req.service_url_override or (cred.service_url or "")
+    service_url = service_url.strip()
     if not service_url:
         raise HTTPException(status_code=400, detail="service_url missing on credential")
 
-    # decrypt payload (expect it contains JSON with at least "password")
+    # 4) Decrypt payload using share_key stored in DB (NOT req.token)
     try:
         encrypted_data = json.loads(shared.encrypted_payload)
     except Exception:
@@ -652,36 +668,34 @@ def relay_login(
 
     try:
         plaintext = ShareEncryptor.decrypt_from_share(encrypted_data, shared.share_key)
+        plaintext = plaintext or ""
         payload = json.loads(plaintext) if plaintext.strip().startswith("{") else {"password": plaintext}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Cannot decrypt share payload: {e}")
 
-    password = payload.get("password")
+    password = (payload.get("password") or "").strip()
     if not password:
         raise HTTPException(status_code=400, detail="Share payload missing 'password'")
 
-    relay_profile = payload.get("relay_profile") or {}  # allow embedding it in plaintext
+    relay_profile = payload.get("relay_profile") or {}
 
-    # Extraire le domaine de l'URL pour trouver un profil prédéfini
-    domain = urllib.parse.urlparse(service_url).netloc
-    domain = domain.split(':')[0]  # enlever le port éventuel
-
-    # Si aucun profil n'est fourni dans le payload, utiliser celui du dictionnaire
-    if not relay_profile:
-        relay_profile = RELAY_PROFILES.get(domain, {})
-
+    # 5) Perform login via Playwright
+    # IMPORTANT: login_and_get_cookies must be async for this to work properly.
     try:
-        # Exécuter le login (asynchrone, on utilise asyncio.run() car la route est synchrone)
-        result = asyncio.run(login_and_get_cookies(
+        result = await login_and_get_cookies(
             service_url=service_url,
-            username=cred.username or req.requester_email,
+            username=(cred.username or requester_email).strip(),
             password=password,
             profile=relay_profile,
-        ))
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Relay login failed: {e}")
 
-    # Audit + one-time revoke logic
+    # Ensure result is a dict (avoid .get errors)
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=500, detail="Relay login returned invalid result type")
+
+    # 6) Audit + revoke logic
     shared.use_count += 1
     shared.used_at = time.time()
     ip = request.client.host if request.client else "unknown"
@@ -703,16 +717,9 @@ def relay_login(
             "title": result.get("title"),
             "used_selectors": result.get("used_selectors"),
         },
-        # cookies returned to set in browser/client
         "cookies": result.get("cookies", []),
-        "localStorage": result.get("localStorage"),  # Ajouté
-
         "message": "Relay login done. Recipient never received the password.",
     }
-
-
-
-
 
 
 

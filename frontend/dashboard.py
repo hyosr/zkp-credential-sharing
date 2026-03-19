@@ -842,15 +842,15 @@ The backend uses a headless browser (Playwright) to perform the login, then retu
 
     with st.form("relay_form"):
         token_input = st.text_input("Share token")
-        requester_email = st.text_input("Your email")
+        # requester_email = st.text_input("Your email")
         submitted = st.form_submit_button("Login via Relay", use_container_width=True)
 
-    if submitted and token_input and requester_email:
+    if submitted and token_input :
         with st.spinner("Relay login..."):
             result = api_post("/sharing/relay-login", {
                 "token": token_input,
-                "requester_email": requester_email,
-            })
+                
+            }, token=st.session_state.jwt_token)
 
         if "cookies" in result:
             st.success("Relay login OK. Session cookies retrieved.")
@@ -879,15 +879,15 @@ Enter the received share token. The secret will be transmitted encrypted and dec
 
     with st.form("access_form"):
         token_input = st.text_input("Share token", help="Token received from the owner")
-        requester_email = st.text_input("Your email")
+        # requester_email = st.text_input("Your email")
         submitted = st.form_submit_button("Access", use_container_width=True)
 
-    if submitted and token_input and requester_email:
+    if submitted and token_input:
         with st.spinner("Zero‑Trust verification..."):
             result = api_post("/sharing/access", {
                 "token": token_input,
-                "requester_email": requester_email,
-            })
+                # "requester_email": requester_email,
+            }, token=st.session_state.jwt_token)
             st.write("API response:", result)   # Temporary line to be removed later
 
         if "encrypted_payload" in result:
