@@ -43,16 +43,35 @@ class KeycloakDeviceFlow:
 
     import requests
 
-    def start(self):
-        url = f"{self.base_url}/realms/{self.realm}/protocol/openid-connect/auth/device"
-        data = {
-            "client_id": self.client_id,
-            "scope": "openid",   # indispensable
-        }
-        resp = requests.post(url, data=data)
-        resp.raise_for_status()
-        return resp.json()
+    # def start(self):
+    #     url = f"{self.base_url}/realms/{self.realm}/protocol/openid-connect/auth/device"
+    #     data = {
+    #         "client_id": self.client_id,
+    #         "scope": "openid",   # indispensable
+    #     }
+    #     resp = requests.post(url, data=data)
+    #     resp.raise_for_status()
+    #     return resp.json()
 
+
+
+
+
+    def start(self):
+        import logging
+        logging.basicConfig(level=logging.DEBUG)
+        url = f"{self.base_url}/realms/{self.realm}/protocol/openid-connect/auth/device"
+        logging.debug(f"Calling Keycloak URL: {url}")
+        data = {"client_id": self.client_id, "scope": "openid"}
+        try:
+           resp = requests.post(url, data=data, timeout=10)
+           logging.debug(f"Response status: {resp.status_code}")
+           logging.debug(f"Response body: {resp.text}")
+           resp.raise_for_status()
+           return resp.json()
+        except Exception as e:
+           logging.exception("Keycloak device start failed")
+           raise Exception(f"Keycloak error: {e}")
 
 
 
