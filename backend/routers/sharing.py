@@ -31,6 +31,7 @@ from backend.crypto.token_manager import (
     list_active_tokens,
     revoke_token,
     validate_and_consume_token,
+    validate_token,
 )
 from backend.models.database import Credential, SharedAccess, User, get_db
 from backend.routers.auth import get_current_user
@@ -41,9 +42,69 @@ from pydantic import BaseModel
 
 from backend.models.database import get_db
 
+
+import secrets
+from threading import Lock
+
+# Temporary in-memory store: session_id -> {"cookies": [...], "service_url": "...", "created_at": ...}
+COOKIE_HANDOFF_STORE: dict[str, dict] = {}
+COOKIE_HANDOFF_LOCK = Lock()
+COOKIE_HANDOFF_TTL_SECONDS = 120  # 2 minutes
+
+
+
 router = APIRouter(prefix="/sharing", tags=["Secure Sharing"])
 
 encryptor = ShareEncryptor()
+
+
+
+
+
+
+
+# ─── Cookie Handoff Store (in-memory) ──────────────────────────────────────────
+COOKIE_HANDOFF_STORE: dict[str, dict] = {}
+COOKIE_HANDOFF_LOCK = Lock()
+COOKIE_HANDOFF_TTL_SECONDS = 120  # 2 minutes
+
+
+def _handoff_cleanup(now: float):
+    for sid, v in list(COOKIE_HANDOFF_STORE.items()):
+        if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
+            COOKIE_HANDOFF_STORE.pop(sid, None)
+
+
+def _handoff_store_put(service_url: str, cookies: list) -> str:
+    session_id = secrets.token_urlsafe(24)
+    now = time.time()
+    with COOKIE_HANDOFF_LOCK:
+        _handoff_cleanup(now)
+        COOKIE_HANDOFF_STORE[session_id] = {
+            "service_url": service_url,
+            "cookies": cookies,
+            "created_at": now,
+        }
+    return session_id
+
+
+def _handoff_store_consume(session_id: str) -> dict | None:
+    now = time.time()
+    with COOKIE_HANDOFF_LOCK:
+        v = COOKIE_HANDOFF_STORE.get(session_id)
+        if not v:
+            return None
+        if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
+            COOKIE_HANDOFF_STORE.pop(session_id, None)
+            return None
+        return COOKIE_HANDOFF_STORE.pop(session_id, None)
+
+
+
+
+
+
+
 
 
 
@@ -66,6 +127,12 @@ RELAY_PROFILES = {
         "password_selector": "input[type='password'].MuiInputBase-input",  # classe + type
         "submit_selector": "button.style_primary-btn__aHK9J",
         "post_login_wait": 2000,  # attendre 2s après soumission
+
+         #✅ NEW: selector that exists only when user is logged in
+        # TODO: adjust to a real element in the logged-in UI if needed
+        "post_login_selector": "text=Logout, text=Se déconnecter, [aria-label*='account'], [data-testid*='avatar']",
+        "post_login_timeout_ms": 15000,
+
     },
     # autres domaines...
 }
@@ -403,7 +470,7 @@ def access_share(
         raise HTTPException(status_code=401, detail="Authenticated user email missing")
 
     # Validate token (zero-trust) against authenticated email
-    share_info = validate_and_consume_token(req.token, requester_email)
+    share_info = validate_token(req.token, requester_email)
     if not share_info:
         raise HTTPException(status_code=403, detail="Token invalide, expiré, ou email non autorisé")
 
@@ -425,18 +492,29 @@ def access_share(
         raise HTTPException(status_code=403, detail="Email non autorisé pour ce partage")
 
     # Audit trail (access attempt recorded)
-    shared.use_count += 1
-    shared.used_at = time.time()
+    # shared.use_count += 1
+    # shared.used_at = time.time()
+    # ip = request.client.host if request.client else "unknown"
+    # ua = request.headers.get("user-agent", "unknown")
+    # shared.add_access_log_entry(ip, ua)
+
+    # # If one-time, revoke after max uses
+    # if shared.permission == "read_once" and shared.use_count >= shared.max_uses:
+    #     shared.is_revoked = True
+    #     shared.revoked_at = time.time()
+
+    # db.commit()
+
+
+        # Audit trail (NO consumption here)
     ip = request.client.host if request.client else "unknown"
     ua = request.headers.get("user-agent", "unknown")
     shared.add_access_log_entry(ip, ua)
-
-    # If one-time, revoke after max uses
-    if shared.permission == "read_once" and shared.use_count >= shared.max_uses:
-        shared.is_revoked = True
-        shared.revoked_at = time.time()
-
     db.commit()
+
+
+
+
 
     # Credential metadata only (no secret material)
     cred = db.query(Credential).filter(Credential.id == shared.credential_id).first()
@@ -726,6 +804,17 @@ async def relay_login(
     if not service_url:
         raise HTTPException(status_code=400, detail="service_url missing on credential")
 
+
+
+        # Choose relay profile by domain if not provided in payload
+    # domain = urllib.parse.urlparse(service_url).netloc.split(":")[0].lower().strip()
+
+        # Choose relay profile by domain if not provided in payload
+    domain = urllib.parse.urlparse(service_url).netloc
+    domain = domain.split(":")[0].lower().strip()
+
+
+
     # 4) Decrypt payload using share_key stored in DB (NOT req.token)
     try:
         encrypted_data = json.loads(shared.encrypted_payload)
@@ -743,19 +832,46 @@ async def relay_login(
     if not password:
         raise HTTPException(status_code=400, detail="Share payload missing 'password'")
 
+    # relay_profile = payload.get("relay_profile") or {}
+
+
     relay_profile = payload.get("relay_profile") or {}
+    if not relay_profile:
+        relay_profile = RELAY_PROFILES.get(domain, {})
+
+
 
     # 5) Perform login via Playwright
     # IMPORTANT: login_and_get_cookies must be async for this to work properly.
+    # try:
+    #     result = await login_and_get_cookies(
+    #         service_url=service_url,
+    #         username=(cred.username or requester_email).strip(),
+    #         password=password,
+    #         profile=relay_profile,
+    #     )
+    # except Exception as e:
+    #     raise HTTPException(status_code=400, detail=f"Relay login failed: {e}")
+
+
     try:
-        result = await login_and_get_cookies(
-            service_url=service_url,
-            username=(cred.username or requester_email).strip(),
-            password=password,
-            profile=relay_profile,
+        result = await asyncio.wait_for(
+            login_and_get_cookies(
+                service_url=service_url,
+                username=(cred.username or requester_email).strip(),
+                password=password,
+                profile=relay_profile,
+            ),
+            timeout=90,  # seconds
         )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Relay login timed out (Playwright took too long)")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Relay login failed: {e}")
+
+
+
+
 
     # Ensure result is a dict (avoid .get errors)
     if not isinstance(result, dict):
@@ -774,6 +890,35 @@ async def relay_login(
 
     db.commit()
 
+    # return {
+    #     "credential_name": cred.name,
+    #     "service_url": service_url,
+    #     "username": cred.username,
+    #     "relay": {
+    #         "current_url": result.get("current_url"),
+    #         "title": result.get("title"),
+    #         "used_selectors": result.get("used_selectors"),
+    #     },
+    #     "cookies": result.get("cookies", []),
+    #     "message": "Relay login done. Recipient never received the password.",
+    # }
+
+
+        # Create a short-lived handoff session for browser extension
+    cookies = result.get("cookies", [])
+    # session_id = _handoff_store_put(service_url=service_url, cookies=cookies)
+    session_id = _handoff_store_put(service_url=service_url, cookies=cookies, current_url=result.get("current_url"))
+
+
+    
+    domain = urllib.parse.urlparse(service_url).netloc.split(':')[0]
+    # Normaliser : enlever le préfixe www.
+    if domain.startswith('www.'):
+        domain = domain[4:]
+
+
+    relay_profile = RELAY_PROFILES.get(domain, {})
+    print(f"DEBUG: domain={domain}, profile={relay_profile}")
     return {
         "credential_name": cred.name,
         "service_url": service_url,
@@ -782,10 +927,39 @@ async def relay_login(
             "current_url": result.get("current_url"),
             "title": result.get("title"),
             "used_selectors": result.get("used_selectors"),
+            "login_detected": result.get("login_detected", False),  # ✅ NEW
+
         },
-        "cookies": result.get("cookies", []),
-        "message": "Relay login done. Recipient never received the password.",
+        "handoff": {
+            "session_id": session_id,
+            "expires_in": COOKIE_HANDOFF_TTL_SECONDS,
+        },
+        "message": "Relay login done. Cookies stored server-side for extension handoff (not shown to frontend).",
     }
+
+
+
+
+
+
+@router.get("/handoff/{session_id}")
+def get_handoff(session_id: str):
+    """
+    Used by the browser extension to fetch cookies and target URL.
+    Session is short-lived and ONE-TIME (consumed).
+    """
+    data = _handoff_store_consume(session_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Handoff session not found or expired")
+
+    return {
+        "service_url": data.get("service_url"),
+
+        "current_url": data.get("current_url"),
+
+        "cookies": data.get("cookies", []),
+    }
+
 
 
 
@@ -894,3 +1068,94 @@ def finalize_share(
         raise HTTPException(status_code=500, detail="Share has no share_key set (data integrity error)")
 
     return {"message": "Partage finalisé. Envoyez le token au destinataire."}
+
+
+
+
+@router.get("/handoff/{session_id}")
+def handoff_get(session_id: str):
+    """
+    One-time cookie handoff endpoint for a browser extension.
+    - short-lived (TTL)
+    - one-time consume
+    """
+    data = _handoff_store_consume(session_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Handoff session not found or expired")
+
+    return {
+        "service_url": data.get("service_url"),
+        "cookies": data.get("cookies", []),
+    }
+
+
+
+
+
+
+
+
+
+
+# def _handoff_store_put(service_url: str, cookies: list) -> str:
+#     session_id = secrets.token_urlsafe(24)
+#     now = time.time()
+#     with COOKIE_HANDOFF_LOCK:
+#         # cleanup
+#         for sid, v in list(COOKIE_HANDOFF_STORE.items()):
+#             if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
+#                 COOKIE_HANDOFF_STORE.pop(sid, None)
+
+#         COOKIE_HANDOFF_STORE[session_id] = {
+#             "service_url": service_url,
+#             "cookies": cookies,
+#             "created_at": now,
+#         }
+#     return session_id
+
+
+def _handoff_store_put(service_url: str, cookies: list, current_url: str | None = None) -> str:
+    session_id = secrets.token_urlsafe(24)
+    now = time.time()
+    with COOKIE_HANDOFF_LOCK:
+        _handoff_cleanup(now)
+        COOKIE_HANDOFF_STORE[session_id] = {
+            "service_url": service_url,
+            "current_url": current_url or service_url,
+            "cookies": cookies,
+            "created_at": now,
+        }
+    return session_id
+
+
+
+
+
+
+
+
+
+
+def _handoff_store_get(session_id: str) -> dict | None:
+    now = time.time()
+    with COOKIE_HANDOFF_LOCK:
+        v = COOKIE_HANDOFF_STORE.get(session_id)
+        if not v:
+            return None
+        if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
+            COOKIE_HANDOFF_STORE.pop(session_id, None)
+            return None
+        return v
+
+
+
+def _handoff_store_consume(session_id: str) -> dict | None:
+    now = time.time()
+    with COOKIE_HANDOFF_LOCK:
+        v = COOKIE_HANDOFF_STORE.get(session_id)
+        if not v:
+            return None
+        if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
+            COOKIE_HANDOFF_STORE.pop(session_id, None)
+            return None
+        return COOKIE_HANDOFF_STORE.pop(session_id, None)

@@ -120,6 +120,37 @@ def validate_and_consume_token(token: str, requester_email: str) -> Optional[Sha
     return share
 
 
+def validate_token(token: str, requester_email: str) -> Optional[ShareToken]:
+    """
+    Validate token WITHOUT consuming it:
+    - exists
+    - recipient email matches
+    - not expired / not exhausted / not used
+    Returns ShareToken if valid, None otherwise.
+    """
+    token_hash = _hash_token(token)
+    record = _TOKEN_STORE.get(token_hash)
+    if not record:
+        return None
+
+    share = ShareToken(**record)
+
+    if share.recipient_email.lower() != requester_email.lower():
+        return None
+
+    if not share.is_valid:
+        if share.is_expired or share.is_exhausted:
+            del _TOKEN_STORE[token_hash]
+        return None
+
+    return share
+
+
+
+
+
+
+
 def revoke_token(token: str, owner_id: int) -> bool:
     """Révoque un token (seul le propriétaire peut révoquer)."""
     token_hash = _hash_token(token)

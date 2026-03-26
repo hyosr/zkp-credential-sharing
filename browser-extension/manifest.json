@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "ZKP Share Cookie Injector",
+  "version": "1.0.0",
+  "permissions": ["cookies", "tabs", "storage"],
+  "host_permissions": [
+    "http://localhost:8001/*",
+    "https://recolyse.com/*"
+  ],
+  "action": {
+    "default_title": "Inject cookies from ZKP share"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

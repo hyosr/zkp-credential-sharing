@@ -144,7 +144,7 @@ def api_post(endpoint: str, data: dict, token: str = None) -> dict:
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        r = requests.post(f"{API_URL}{endpoint}", json=data, headers=headers, timeout=20)
+        r = requests.post(f"{API_URL}{endpoint}", json=data, headers=headers, timeout=120)
 
         # Always return status + body if not JSON
         content_type = (r.headers.get("content-type") or "").lower()
@@ -913,43 +913,120 @@ def page_share():
             st.error(f"Finalize error: {fin}")
 
 
-def page_relay_login():
-    st.title("🚪 Secure Relay Login (without revealing the password)")
-    st.markdown(
-        """
-This mode allows the recipient to log in to a *classic* app (username/password)
-**without ever seeing the password**.
+# def page_relay_login():
+#     st.title("🚪 Secure Relay Login (without revealing the password)")
+#     st.markdown(
+#         """
+# This mode allows the recipient to log in to a *classic* app (username/password)
+# **without ever seeing the password**.
 
-The backend uses a headless browser (Playwright) to perform the login, then returns session cookies.
-        """
-    )
+# The backend uses a headless browser (Playwright) to perform the login, then returns session cookies.
+#         """
+#     )
+
+#     with st.form("relay_form"):
+#         token_input = st.text_input("Share token")
+#         # requester_email = st.text_input("Your email")
+#         submitted = st.form_submit_button("Login via Relay", use_container_width=True)
+
+#     if submitted and token_input :
+#         with st.spinner("Relay login..."):
+#             result = api_post("/sharing/relay-login", {
+#                 "token": token_input,
+                
+#             }, token=st.session_state.jwt_token)
+
+#         if "cookies" in result:
+#             st.success("Relay login OK. Session cookies retrieved.")
+#             st.write("URL after login:", result.get("relay", {}).get("current_url"))
+#             st.write("Title:", result.get("relay", {}).get("title"))
+#             st.json(result.get("cookies", []))
+#             st.warning(
+#                 "To use these cookies in a normal browser, you need an extension or a script. "
+#                 "Streamlit cannot inject cookies into your browser automatically."
+#             )
+
+#         elif "localStorage" in result and result["localStorage"]:
+#             st.write("LocalStorage (may contain tokens):", result["localStorage"])
+#         else:
+#             st.error(f"Relay login failed: {result.get('detail', result)}")
+
+
+
+
+def page_relay_login():
+    st.title("🚪 Secure Relay Login (sans révéler le mot de passe)")
+    st.markdown("""
+Ce mode permet au destinataire de se connecter à une app *classique* (username/password)
+**sans jamais voir le mot de passe**.
+
+Le backend utilise Playwright pour faire le login, puis stocke les cookies côté serveur
+(temporairement). Ensuite, une extension Chrome récupère ces cookies via un `handoff session_id`
+et les injecte automatiquement dans le navigateur.
+""")
+
+    if not st.session_state.get("jwt_token"):
+        st.error("Vous devez être connecté (JWT ZKP) pour utiliser Relay Login.")
+        return
 
     with st.form("relay_form"):
-        token_input = st.text_input("Share token")
-        # requester_email = st.text_input("Your email")
-        submitted = st.form_submit_button("Login via Relay", use_container_width=True)
+        token_input = st.text_input("🔑 Token de partage")
+        submitted = st.form_submit_button("🔐 Login via Relay", use_container_width=True)
 
-    if submitted and token_input :
+    if submitted and token_input:
         with st.spinner("Relay login..."):
-            result = api_post("/sharing/relay-login", {
-                "token": token_input,
-                
-            }, token=st.session_state.jwt_token)
-
-        if "cookies" in result:
-            st.success("Relay login OK. Session cookies retrieved.")
-            st.write("URL after login:", result.get("relay", {}).get("current_url"))
-            st.write("Title:", result.get("relay", {}).get("title"))
-            st.json(result.get("cookies", []))
-            st.warning(
-                "To use these cookies in a normal browser, you need an extension or a script. "
-                "Streamlit cannot inject cookies into your browser automatically."
+            result = api_post(
+                "/sharing/relay-login",
+                {"token": token_input},
+                token=st.session_state.jwt_token,
             )
 
-        elif "localStorage" in result and result["localStorage"]:
-            st.write("LocalStorage (may contain tokens):", result["localStorage"])
+        if isinstance(result, dict) and "handoff" in result and result["handoff"].get("session_id"):
+            st.success("✅ Relay login OK. Cookies stockés côté serveur (non affichés).")
+            st.write("URL après login:", result.get("relay", {}).get("current_url"))
+            st.write("Titre:", result.get("relay", {}).get("title"))
+
+            session_id = result["handoff"]["session_id"]
+            expires_in = result["handoff"].get("expires_in")
+
+            handoff_url = f"{API_URL}/sharing/handoff/{session_id}"
+
+            st.markdown("### Étape suivante (Injection automatique via extension Chrome)")
+            st.write("Handoff URL (à fournir à l’extension) :")
+            st.code(handoff_url, language="text")
+            st.caption(f"Expire dans ~{expires_in} secondes.")
+
+            st.warning("""
+Streamlit ne peut pas injecter des cookies dans ton navigateur (limitation sécurité navigateur).
+Installe l’extension Chrome fournie, colle cette handoff URL dans l’extension, puis clique l’icône.
+L’extension va:
+1) télécharger les cookies depuis le backend,
+2) les injecter dans le domaine cible,
+3) ouvrir le site connecté.
+""")
         else:
-            st.error(f"Relay login failed: {result.get('detail', result)}")
+            st.error(f"❌ Relay login échoué: {result.get('detail', result)}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # def page_access_share():
@@ -1070,13 +1147,59 @@ Then you can use **Relay Login** to log into the target website.
                     file_name="cookies.json",
                     mime="application/json",
             )
+                    
                 else:
                     st.error(f"❌ Relay login failed: {relay.get('detail', relay)}")
+
+
+
+                if isinstance(relay, dict) and "handoff" in relay and relay["handoff"].get("session_id"):
+                    render_handoff_ui(
+                    service_url=relay.get("service_url") or "",
+                    session_id=relay["handoff"]["session_id"],
+                    )
+                else:
+                    st.error(f"❌ Relay login failed: {relay.get('detail', relay)}")
+
+
+
+
+
+
 
             return
 
         # ---- ERROR PATH ----
         st.error(f"❌ Access denied: {result.get('detail', result)}")
+
+
+
+
+
+
+
+
+
+def render_handoff_ui(service_url: str, session_id: str):
+    st.success("✅ Relay login OK. Ready to inject cookies automatically (via extension).")
+    st.write("Target service:", service_url)
+    st.write("Handoff session id (expires quickly):", session_id)
+
+    # This URL is what the extension will read from (backend endpoint)
+    handoff_api_url = f"{API_URL}/sharing/handoff/{session_id}"
+
+    st.markdown("### Step: click the button below (extension must be installed)")
+    st.markdown(
+        f"""
+Open this in your browser (same browser where extension is installed):
+- Handoff API URL (extension will fetch it): `{handoff_api_url}`
+- Then extension will inject cookies into the target domain and open `{service_url}`
+        """
+    )
+
+    # Just open target URL; extension will inject cookies before/after
+    st.link_button("🚀 Open target service (extension will inject cookies)", service_url, use_container_width=True)
+    st.code(handoff_api_url, language="text")
 
 
 
