@@ -15,6 +15,16 @@ from backend.models.database import create_tables
 from backend.routers import auth, credentials, sharing
 from backend.routers import keycloak_sharing  # <-- add
 
+from fastapi import FastAPI, Depends, HTTPException, Header
+import jwt
+import requests
+
+ 
+
+
+
+
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -72,4 +82,22 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "healthy", "zkp": "enabled", "encryption": "AES-256-GCM"}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

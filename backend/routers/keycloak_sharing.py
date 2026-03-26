@@ -4,6 +4,10 @@ from pydantic import BaseModel
 
 from backend.integrations.keycloak_device_flow import KeycloakDeviceFlow
 
+from fastapi import Depends, Request
+from backend.auth.keycloak_auth import get_keycloak_user
+
+
 router = APIRouter(prefix="/keycloak-sharing", tags=["Keycloak Secure Sharing"])
 
 KEYCLOAK_URL = os.getenv("KEYCLOAK_URL", "http://localhost:8080")
@@ -57,3 +61,46 @@ def device_poll(req: DevicePollRequest):
         raise HTTPException(status_code=408, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+    
+
+
+
+
+
+
+
+
+class ProtectedSecretRequest(BaseModel):
+    credential_id: int
+
+
+@router.post("/secret")
+def get_shared_secret(
+    req: ProtectedSecretRequest,
+    request: Request,
+    claims: dict = Depends(get_keycloak_user),
+):
+    """
+    Step 3 (FINAL):
+    Requester calls this endpoint with:
+      Authorization: Bearer <keycloak_access_token>
+
+    For now (testing): returns a dummy secret + identity extracted from token.
+    Later: you will link credential_id to your real DB logic.
+    """
+    email = (claims.get("email") or "").strip().lower()
+    username = (claims.get("preferred_username") or "").strip()
+
+    ip = request.client.host if request.client else "unknown"
+
+    # Dummy secret for now (replace later with DB lookup + your sharing rules)
+    return {
+        "credential_id": req.credential_id,
+        "secret": f"DUMMY_SECRET_FOR_CREDENTIAL_{req.credential_id}",
+        "whoami": {
+            "email": email,
+            "preferred_username": username,
+            "ip": ip,
+        },
+        "message": "OK — Keycloak token validated. Replace dummy secret with DB-backed share logic.",
+    }

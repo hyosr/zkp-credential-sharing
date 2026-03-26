@@ -556,19 +556,82 @@ def page_login():
                 st.error(f"Authentication failed: {resp_verify.get('detail', resp_verify)}")
 
 
+# def page_keycloak_device_flow():
+#     st.title("🔐 Keycloak Passwordless Share (Device Authorization Grant)")
+#     st.markdown(
+#         """
+# This module implements **option B**: sharing access **without sharing the password**.
+
+# - Recipient starts a *Device Flow* → obtains a `user_code`
+# - Owner logs in **directly on Keycloak**
+# - Backend retrieves an `access_token` via polling
+#         """
+#     )
+
+#     col1, col2 = st.columns(2, gap="large")
+
+#     with col1:
+#         st.subheader("Step 1 — Start device flow")
+#         if st.button("Start device flow", use_container_width=True):
+#             r = api_post("/keycloak-sharing/device/start", {})
+#             if "device_code" in r:
+#                 st.session_state["kc_device"] = r
+#                 st.success("Device flow started")
+#             else:
+#                 st.error(r.get("detail", r))
+
+#         device = st.session_state.get("kc_device")
+#         if device:
+#             st.markdown('<div class="zkp-card">', unsafe_allow_html=True)
+#             st.write("verification_uri:", device.get("verification_uri"))
+#             st.write("user_code:", device.get("user_code"))
+#             if device.get("verification_uri_complete"):
+#                 st.write("verification_uri_complete:", device.get("verification_uri_complete"))
+#             st.code(device.get("user_code", ""), language="text")
+#             st.markdown("</div>", unsafe_allow_html=True)
+
+#     with col2:
+#         st.subheader("Step 2 — Poll for token")
+#         st.markdown("After logging in on Keycloak, retrieve the token:")
+#         if st.button("Poll for token", use_container_width=True):
+#             device = st.session_state.get("kc_device")
+#             if not device:
+#                 st.error("Start device flow first.")
+#                 return
+
+#             r = api_post("/keycloak-sharing/device/poll", {
+#                 "device_code": device["device_code"],
+#                 "interval": int(device.get("interval", 5)),
+#             })
+
+#             if "access_token" in r:
+#                 st.session_state["kc_token"] = r
+#                 st.success("Access token received")
+#             else:
+#                 st.error(r.get("detail", r))
+
+#         token = st.session_state.get("kc_token")
+#         if token:
+#             st.markdown('<div class="zkp-card">', unsafe_allow_html=True)
+#             st.write("token_type:", token.get("token_type"))
+#             st.write("expires_in:", token.get("expires_in"))
+#             st.text_area("access_token", token.get("access_token", ""), height=180)
+#             st.markdown("</div>", unsafe_allow_html=True)
+
+
+
+
 def page_keycloak_device_flow():
     st.title("🔐 Keycloak Passwordless Share (Device Authorization Grant)")
-    st.markdown(
-        """
-This module implements **option B**: sharing access **without sharing the password**.
+    st.markdown("""
+This module implements option B: sharing access **without sharing the password**.
 
-- Recipient starts a *Device Flow* → obtains a `user_code`
-- Owner logs in **directly on Keycloak**
-- Backend retrieves an `access_token` via polling
-        """
-    )
+Recipient starts a Device Flow → obtains a user_code  
+Owner logs in directly on Keycloak  
+Backend retrieves an access_token via polling
+    """)
 
-    col1, col2 = st.columns(2, gap="large")
+    col1, col2 = st.columns(2)
 
     with col1:
         st.subheader("Step 1 — Start device flow")
@@ -582,17 +645,15 @@ This module implements **option B**: sharing access **without sharing the passwo
 
         device = st.session_state.get("kc_device")
         if device:
-            st.markdown('<div class="zkp-card">', unsafe_allow_html=True)
             st.write("verification_uri:", device.get("verification_uri"))
             st.write("user_code:", device.get("user_code"))
             if device.get("verification_uri_complete"):
                 st.write("verification_uri_complete:", device.get("verification_uri_complete"))
             st.code(device.get("user_code", ""), language="text")
-            st.markdown("</div>", unsafe_allow_html=True)
 
     with col2:
         st.subheader("Step 2 — Poll for token")
-        st.markdown("After logging in on Keycloak, retrieve the token:")
+        st.caption("After logging in on Keycloak using the verification URL, poll until token is issued.")
         if st.button("Poll for token", use_container_width=True):
             device = st.session_state.get("kc_device")
             if not device:
@@ -612,11 +673,34 @@ This module implements **option B**: sharing access **without sharing the passwo
 
         token = st.session_state.get("kc_token")
         if token:
-            st.markdown('<div class="zkp-card">', unsafe_allow_html=True)
             st.write("token_type:", token.get("token_type"))
             st.write("expires_in:", token.get("expires_in"))
             st.text_area("access_token", token.get("access_token", ""), height=180)
-            st.markdown("</div>", unsafe_allow_html=True)
+
+    # Step 3: Use token to retrieve shared secret
+    st.markdown("---")
+    st.subheader("Step 3 — Use token to retrieve the shared secret (protected endpoint)")
+
+    access_token = st.session_state.get("kc_token", {}).get("access_token")
+    if not access_token:
+        st.info("Complete Step 2 first (get an access_token).")
+    else:
+        cred_id = st.number_input("Credential ID (or share ID)", min_value=1, step=1, value=1)
+
+        if st.button("Fetch secret from backend", use_container_width=True):
+            headers = {"Authorization": f"Bearer {access_token}"}
+            try:
+                # Appel à l'endpoint protégé (à créer dans le backend)
+                resp = requests.get(f"{API_URL}/protected/credential/{cred_id}", headers=headers, timeout=30)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    st.success("✅ Secret retrieved successfully!")
+                    st.code(data.get("secret", "No secret in response"), language="text")
+                else:
+                    st.error(f"❌ Failed to retrieve secret (HTTP {resp.status_code})")
+                    st.json(resp.text if resp.text else {"error": "Empty response"})
+            except Exception as e:
+                st.error(f"Request failed: {e}")
 
 
 def page_register():
@@ -868,51 +952,145 @@ The backend uses a headless browser (Playwright) to perform the login, then retu
             st.error(f"Relay login failed: {result.get('detail', result)}")
 
 
+# def page_access_share():
+#     st.title("📩 Access a Shared Credential")
+#     st.markdown(
+#         """
+# Enter the received share token. The secret will be transmitted encrypted and decrypted
+# **only in your browser**.
+#         """
+#     )
+
+#     with st.form("access_form"):
+#         token_input = st.text_input("Share token", help="Token received from the owner")
+#         # requester_email = st.text_input("Your email")
+#         submitted = st.form_submit_button("Access", use_container_width=True)
+
+#     if submitted and token_input:
+#         with st.spinner("Zero‑Trust verification..."):
+#             result = api_post("/sharing/access", {
+#                 "token": token_input,
+#                 # "requester_email": requester_email,
+#             }, token=st.session_state.jwt_token)
+#             st.write("API response:", result)   # Temporary line to be removed later
+
+#         if "encrypted_payload" in result:
+#             try:
+#                 decrypted_secret = decrypt_from_share(result["encrypted_payload"], result["decryption_key"])
+#                 st.markdown(
+#                     f"""
+#                     <div class="zkp-success">
+#                       ✅ <strong>Access granted</strong> — Credential: <strong>{result['credential_name']}</strong><br/>
+#                       <span class="zkp-muted">Decrypted locally in the browser.</span>
+#                     </div>
+#                     <div class="zkp-card">
+#                       <strong>Service:</strong> {result.get('service_url', '—')}<br/>
+#                       <strong>Username:</strong> {result.get('username', '—')}<br/>
+#                       <strong>Secret:</strong> <code>{decrypted_secret}</code>
+#                     </div>
+#                     """,
+#                     unsafe_allow_html=True,
+#                 )
+#                 if result.get("permission") == "read_once":
+#                     st.warning("One‑time use token — invalidated after this access")
+#             except Exception as e:
+#                 st.error(f"Local decryption failed: {e}")
+#         else:
+#             st.error(f"Access denied: {result.get('detail', result)}")
+
+
+
+
 def page_access_share():
-    st.title("📩 Access a Shared Credential")
+    st.title("📩 Access a Shared Credential (No Secret Reveal)")
     st.markdown(
         """
-Enter the received share token. The secret will be transmitted encrypted and decrypted
-**only in your browser**.
+Enter the received share token.  
+We will **verify** that you are allowed to use it **without revealing the secret**.
+Then you can use **Relay Login** to log into the target website.
         """
     )
 
+    token = st.session_state.get("jwt_token")
+    if not token:
+        st.error("You must be logged in to access a share (missing jwt_token).")
+        return
+
     with st.form("access_form"):
-        token_input = st.text_input("Share token", help="Token received from the owner")
-        # requester_email = st.text_input("Your email")
-        submitted = st.form_submit_button("Access", use_container_width=True)
+        token_input = st.text_input("🔑 Share token")
+        submitted = st.form_submit_button("Verify access", use_container_width=True)
 
-    if submitted and token_input:
-        with st.spinner("Zero‑Trust verification..."):
-            result = api_post("/sharing/access", {
-                "token": token_input,
-                # "requester_email": requester_email,
-            }, token=st.session_state.jwt_token)
-            st.write("API response:", result)   # Temporary line to be removed later
+    if submitted:
+        if not token_input:
+            st.warning("Please paste the share token.")
+            return
 
-        if "encrypted_payload" in result:
-            try:
-                decrypted_secret = decrypt_from_share(result["encrypted_payload"], result["decryption_key"])
-                st.markdown(
-                    f"""
-                    <div class="zkp-success">
-                      ✅ <strong>Access granted</strong> — Credential: <strong>{result['credential_name']}</strong><br/>
-                      <span class="zkp-muted">Decrypted locally in the browser.</span>
-                    </div>
-                    <div class="zkp-card">
-                      <strong>Service:</strong> {result.get('service_url', '—')}<br/>
-                      <strong>Username:</strong> {result.get('username', '—')}<br/>
-                      <strong>Secret:</strong> <code>{decrypted_secret}</code>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                if result.get("permission") == "read_once":
-                    st.warning("One‑time use token — invalidated after this access")
-            except Exception as e:
-                st.error(f"Local decryption failed: {e}")
-        else:
-            st.error(f"Access denied: {result.get('detail', result)}")
+        with st.spinner("Verifying access..."):
+            result = api_post("/sharing/access", {"token": token_input}, token=token)
+
+        # ---- SUCCESS PATH (new logic) ----
+        if isinstance(result, dict) and result.get("next_action") == "relay_login":
+            st.success("✅ Access verified. Secret will NOT be revealed.")
+            st.write("Credential name:", result.get("credential_name"))
+            st.write("Service URL:", result.get("service_url"))
+            st.write("Username:", result.get("username"))
+            st.write("Permission:", result.get("permission"))
+            st.write("Uses:", f"{result.get('use_count')} / {result.get('max_uses')}")
+            st.info(result.get("message"))
+
+            st.markdown("---")
+            st.subheader("🚪 Relay Login (no password reveal)")
+
+            requester_email = st.text_input(
+                "📧 Your email (must match the recipient email)",
+                value=result.get("username") or "",
+            )
+
+            if st.button("🔐 Login via Relay", use_container_width=True):
+                with st.spinner("Relay login..."):
+                    relay = api_post(
+                        "/sharing/relay-login",
+                        {"token": token_input, "requester_email": requester_email},
+                        token=token,
+                    )
+
+                if isinstance(relay, dict) and "cookies" in relay:
+                    st.success("✅ Relay login OK. Session cookies retrieved.")
+                    st.write("URL after login:", relay.get("relay", {}).get("current_url"))
+                    st.write("Title:", relay.get("relay", {}).get("title"))
+                    st.json(relay.get("cookies", []))
+                    st.warning(
+                        "Streamlit cannot automatically inject these cookies into your browser. "
+                        "Use a browser extension/script to import cookies if you want to browse as logged-in."
+                    )
+
+                    st.download_button(
+                    "⬇️ Download cookies.json",
+                    data=json.dumps(relay.get("cookies", []), indent=2),
+                    file_name="cookies.json",
+                    mime="application/json",
+            )
+                else:
+                    st.error(f"❌ Relay login failed: {relay.get('detail', relay)}")
+
+            return
+
+        # ---- ERROR PATH ----
+        st.error(f"❌ Access denied: {result.get('detail', result)}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def page_audit():
@@ -1007,1754 +1185,6 @@ s = r-cx mod q → verify g^s·Y^c=Y_r → nothing (token invalidated)
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#version anglaise de dashboard.py
-# """
-# ZKP Secure Credential Sharing - Streamlit Dashboard
-# =====================================================
-# Complete user interface for Part 2.
-# Implements the CLIENT side of the ZKP protocol:
-#   - Derivation of secret x on the client side
-#   - Generation of commitment g^r mod p
-#   - Computation of response s = r - c*x mod q
-#   - Local AES-256-GCM encryption/decryption
-# """
-
-# import base64
-# import hashlib
-# import json
-# import os
-# import secrets
-# import time
-# from typing import Optional
-
-# import requests
-# import streamlit as st
-# from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-# # ─── Configuration ────────────────────────────────────────────────────────────
-
-# API_URL = os.getenv("ZKP_API_URL", "http://localhost:8001")
-
-# # ZKP parameters (identical to the server)
-# P = int(
-#     "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1"
-#     "29024E088A67CC74020BBEA63B139B22514A08798E3404DD"
-#     "EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245"
-#     "E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED"
-#     "EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3D"
-#     "C2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F"
-#     "83655D23DCA3AD961C62F356208552BB9ED529077096966D"
-#     "670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B"
-#     "E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9"
-#     "DE2BCBF6955817183995497CEA956AE515D2261898FA0510"
-#     "15728E5A8AACAA68FFFFFFFFFFFFFFFF",
-#     16,
-# )
-# G = 2
-# Q = (P - 1) // 2
-
-
-# # ─── Client‑Side ZKP Functions ────────────────────────────────────────────────
-
-# def client_derive_secret(password: str, salt_b64: str) -> int:
-#     """Derive secret x from password (client side)."""
-#     salt = base64.b64decode(salt_b64)
-#     dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations=310_000, dklen=32)
-#     return int.from_bytes(dk, "big") % (Q - 1) + 1
-
-
-# def client_generate_public_key(password: str) -> tuple:
-#     """Generate (Y=g^x mod p, salt_b64)."""
-#     salt = os.urandom(32)
-#     x = client_derive_secret(password, base64.b64encode(salt).decode())
-#     Y = pow(G, x, P)
-#     return hex(Y), base64.b64encode(salt).decode()
-
-
-# def client_create_commitment() -> tuple:
-#     """Generate (Y_r=g^r mod p, r)."""
-#     r = secrets.randbelow(Q - 1) + 1
-#     Y_r = pow(G, r, P)
-#     return hex(Y_r), r
-
-
-# def client_compute_response(password: str, salt_b64: str, r: int, challenge_hex: str) -> str:
-#     """Compute s = r - c*x mod q."""
-#     x = client_derive_secret(password, salt_b64)
-#     c = int(challenge_hex, 16)
-#     s = (r - c * x) % Q
-#     return hex(s)
-
-
-# def client_encrypt(plaintext: str, password: str, salt_b64: str) -> str:
-#     """Encrypt locally with AES-256-GCM (key derived from master password)."""
-#     salt = base64.b64decode(salt_b64)
-#     key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations=310_000, dklen=32)
-#     nonce = os.urandom(12)
-#     aesgcm = AESGCM(key)
-#     ct = aesgcm.encrypt(nonce, plaintext.encode(), None)
-#     return json.dumps({
-#         "salt": salt_b64,
-#         "nonce": base64.b64encode(nonce).decode(),
-#         "ciphertext": base64.b64encode(ct).decode(),
-#     })
-
-
-# def client_decrypt(encrypted_json: str, password: str) -> str:
-#     """Decrypt locally with AES-256-GCM."""
-#     d = json.loads(encrypted_json)
-#     salt = base64.b64decode(d["salt"])
-#     nonce = base64.b64decode(d["nonce"])
-#     ct = base64.b64decode(d["ciphertext"])
-#     key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations=310_000, dklen=32)
-#     aesgcm = AESGCM(key)
-#     return aesgcm.decrypt(nonce, ct, None).decode()
-
-
-# # def _b64decode_any(b64_str: str) -> bytes:
-# #     """
-# #     Décode base64 standard OU urlsafe en ajoutant le padding correct.
-# #     """
-# #     s = b64_str.strip()
-# #     # padding base64 correct (multiple de 4)
-# #     s += "=" * (-len(s) % 4)
-# #     try:
-# #         return base64.urlsafe_b64decode(s.encode())
-# #     except Exception:
-# #         # fallback standard
-# #         return base64.b64decode(s.encode())
-
-# # def encrypt_for_share(plaintext: str, share_token: str) -> str:
-# #     """
-# #     Chiffre avec AES-256-GCM en utilisant la clé dérivée du token.
-# #     Nonce = 12 bytes (obligatoire / standard GCM).
-# #     """
-# #     raw_key_full = _b64decode_any(share_token)
-# #     raw_key = raw_key_full[:32]
-# #     if len(raw_key) != 32:
-# #         raise ValueError("Share token invalide: impossible d'obtenir une clé 32 bytes")
-
-# #     nonce = os.urandom(12)
-# #     aesgcm = AESGCM(raw_key)
-# #     ct = aesgcm.encrypt(nonce, plaintext.encode(), None)
-
-# #     return json.dumps({
-# #         "nonce": base64.b64encode(nonce).decode(),
-# #         "ciphertext": base64.b64encode(ct).decode(),
-# #     })
-
-# # def decrypt_from_share(encrypted_json: str, share_token: str) -> str:
-# #     d = json.loads(encrypted_json)
-# #     try:
-# #         raw_key_full = _b64decode_any(share_token)
-# #         raw_key = raw_key_full[:32]
-# #         nonce = _b64decode_any(d["nonce"])
-# #         ct = _b64decode_any(d["ciphertext"])
-# #         aesgcm = AESGCM(raw_key)
-# #         plain = aesgcm.decrypt(nonce, ct, None).decode()
-# #         return plain
-# #     except Exception as e:
-# #         st.error(f"Exception type: {type(e).__name__}, message: {str(e)}")
-# #         raise  # ou return None, selon votre besoin
-
-
-
-# def _b64decode_urlsafe_padded(s: str) -> bytes:
-#     s = (s or "").strip()
-#     s += "=" * (-len(s) % 4)
-#     return base64.urlsafe_b64decode(s.encode("utf-8"))
-
-
-# def encrypt_for_share(plaintext: str, share_token: str) -> str:
-#     """Encrypt a secret with an ephemeral share token."""
-#     raw = _b64decode_urlsafe_padded(share_token)
-#     key = raw[:32]
-#     if len(key) != 32:
-#         raise ValueError("Share token invalid (incorrect key).")
-
-#     nonce = os.urandom(12)
-#     aesgcm = AESGCM(key)
-#     ct = aesgcm.encrypt(nonce, plaintext.encode(), None)
-#     return json.dumps({
-#         "nonce": base64.b64encode(nonce).decode(),
-#         "ciphertext": base64.b64encode(ct).decode(),
-#     })
-
-
-# def decrypt_from_share(encrypted_json: str, share_token: str) -> str:
-#     """Decrypt with the share token."""
-#     d = json.loads(encrypted_json)
-#     raw = _b64decode_urlsafe_padded(share_token)
-#     key = raw[:32]
-#     if len(key) != 32:
-#         raise ValueError("Share token invalid (incorrect key).")
-
-#     nonce = base64.b64decode(d["nonce"])
-#     ct = base64.b64decode(d["ciphertext"])
-#     aesgcm = AESGCM(key)
-#     return aesgcm.decrypt(nonce, ct, None).decode()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# # ─── API Helpers ──────────────────────────────────────────────────────────────
-
-# def api_post(endpoint: str, data: dict, token: str = None) -> dict:
-#     headers = {}
-#     if token:
-#         headers["Authorization"] = f"Bearer {token}"
-#     try:
-#         r = requests.post(f"{API_URL}{endpoint}", json=data, headers=headers, timeout=20)
-
-#         # Always return status + body if not JSON
-#         content_type = (r.headers.get("content-type") or "").lower()
-#         if "application/json" not in content_type:
-#             return {
-#                 "error": "Non-JSON response from API",
-#                 "status_code": r.status_code,
-#                 "content_type": content_type,
-#                 "text": r.text[:2000],  # for debug
-#                 "endpoint": endpoint,
-#             }
-
-#         return r.json()
-#     except Exception as e:
-#         return {"error": str(e), "endpoint": endpoint}
-
-
-# def api_get(endpoint: str, token: str = None) -> dict:
-#     headers = {}
-#     if token:
-#         headers["Authorization"] = f"Bearer {token}"
-#     try:
-#         r = requests.get(f"{API_URL}{endpoint}", headers=headers, timeout=15)
-#         return r.json()
-#     except Exception as e:
-#         return {"error": str(e)}
-
-
-# # ─── Streamlit UI ─────────────────────────────────────────────────────────────
-
-# def main():
-#     st.set_page_config(
-#         page_title="🔐 ZKP Credential Sharing",
-#         page_icon="🔐",
-#         layout="wide",
-#         initial_sidebar_state="expanded",
-#     )
-
-#     # Custom CSS
-#     st.markdown("""
-#     <style>
-#     .zkp-badge { background: linear-gradient(135deg,#1a1a2e,#16213e);
-#                  color:#00d4ff; padding:4px 12px; border-radius:20px;
-#                  font-size:12px; font-weight:bold; border:1px solid #00d4ff; }
-#     .success-box { background:#0a3d2e; border-left:4px solid #00ff88;
-#                    padding:12px; border-radius:4px; margin:8px 0; }
-#     .warning-box { background:#3d2e0a; border-left:4px solid #ffaa00;
-#                    padding:12px; border-radius:4px; margin:8px 0; }
-#     </style>
-#     """, unsafe_allow_html=True)
-
-#     # ─── Sidebar ──────────────────────────────────────────────────────────────
-#     with st.sidebar:
-#         st.markdown("## 🔐 ZKP Credential Sharing")
-#         st.markdown('<span class="zkp-badge">Zero-Knowledge Proof</span>', unsafe_allow_html=True)
-#         st.markdown("---")
-
-#         if "jwt_token" not in st.session_state:
-#             st.session_state.jwt_token = None
-#             st.session_state.current_user = None
-#             st.session_state.master_password = None
-#             st.session_state.zkp_salt = None
-#             st.session_state.master_salt = None
-
-#         if st.session_state.jwt_token:
-#             st.success(f"✅ Logged in: {st.session_state.current_user}")
-#             if st.button("🚪 Logout"):
-#                 for k in ["jwt_token", "current_user", "master_password", "zkp_salt", "master_salt"]:
-#                     st.session_state[k] = None
-#                 st.rerun()
-#             menu = st.radio("Navigation", [
-#                 "🔑 My Credentials",
-#                 "➕ New Credential",
-#                 "🤝 Share",
-#                 "📩 Access a Share",
-#                 "🚪 Relay Login (no password reveal)",
-#                 "🔐 Keycloak Passwordless Share (Device Flow)",
-#                 "📋 Audit Trail",
-#                 "ℹ️ About ZKP",
-#             ])
-#         else:
-#             menu = st.radio("Navigation", ["🔐 ZKP Login", "📝 Register", "ℹ️ About ZKP"])
-
-#     # ─── Pages ────────────────────────────────────────────────────────────────
-
-#     if menu == "🔐 ZKP Login":
-#         page_login()
-#     elif menu == "📝 Register":
-#         page_register()
-#     elif menu == "🔑 My Credentials":
-#         page_credentials()
-#     elif menu == "➕ New Credential":
-#         page_new_credential()
-#     elif menu == "🤝 Share":
-#         page_share()
-#     elif menu == "📩 Access a Share":
-#         page_access_share()
-#     elif menu == "📋 Audit Trail":
-#         page_audit()
-#     elif menu == "ℹ️ About ZKP":
-#         page_about_zkp()
-#     elif menu == "🚪 Relay Login (no password reveal)":
-#         page_relay_login()
-#     elif menu == "🔐 Keycloak Passwordless Share (Device Flow)":
-#         page_keycloak_device_flow()
-
-
-# def page_login():
-#     st.title("🔐 Zero-Knowledge Proof Login")
-#     st.markdown("""
-#     > **ZKP Principle**: You prove you know your password
-#     > **without ever sending it** to the server. The Schnorr protocol guarantees
-#     > that any adversary intercepting communications cannot recover your secret.
-#     """)
-
-#     col1, col2 = st.columns([1, 1])
-#     with col1:
-#         st.markdown("### Schnorr Protocol Steps")
-#         st.markdown("""
-#         1. 🎲 **Commitment**: You generate random `r` → send `g^r mod p`
-#         2. 🎯 **Challenge**: Server generates `c = H(Y || g^r || email)`
-#         3. 📐 **Response**: You compute `s = r - c·x mod q`
-#         4. ✅ **Verification**: Server checks `g^s · Y^c ≡ g^r (mod p)`
-#         """)
-
-#     with col2:
-#         with st.form("login_form"):
-#             email = st.text_input("📧 Email")
-#             password = st.text_input("🔑 Password (stays local)", type="password")
-#             submitted = st.form_submit_button("🚀 ZKP Login", use_container_width=True)
-
-#         if submitted and email and password:
-#             with st.spinner("Retrieving salts..."):
-#                 salts = api_get(f"/auth/salts/{email}")
-#             if "error" in salts or "zkp_salt" not in salts:
-#                 st.error("❌ User not found")
-#                 return
-
-#             zkp_salt = salts["zkp_salt"]
-#             master_salt = salts["master_salt"]
-
-#             with st.spinner("Generating ZKP commitment..."):
-#                 commitment_hex, r = client_create_commitment()
-#                 resp_challenge = api_post("/auth/challenge", {
-#                     "email": email,
-#                     "commitment": commitment_hex,
-#                 })
-
-#             if "error" in resp_challenge or "challenge_id" not in resp_challenge:
-#                 st.error(f"❌ Challenge error: {resp_challenge}")
-#                 return
-
-#             challenge_id = resp_challenge["challenge_id"]
-#             challenge_hex = resp_challenge["challenge_value"]
-
-#             with st.spinner("Computing ZKP proof..."):
-#                 response_hex = client_compute_response(password, zkp_salt, r, challenge_hex)
-#                 resp_verify = api_post("/auth/verify", {
-#                     "email": email,
-#                     "challenge_id": challenge_id,
-#                     "response": response_hex,
-#                 })
-
-#             if "access_token" in resp_verify:
-#                 st.session_state.jwt_token = resp_verify["access_token"]
-#                 st.session_state.current_user = resp_verify["username"]
-#                 st.session_state.master_password = password
-#                 st.session_state.zkp_salt = zkp_salt
-#                 st.session_state.master_salt = master_salt
-#                 st.success(f"✅ ZKP login successful! Welcome {resp_verify['username']}")
-#                 st.balloons()
-#                 st.rerun()
-#             else:
-#                 st.error(f"❌ Authentication failed: {resp_verify.get('detail', resp_verify)}")
-
-
-# def page_keycloak_device_flow():
-#     st.title("🔐 Keycloak Passwordless Share (Device Authorization Grant)")
-#     st.markdown("""
-# This module implements **option B**: sharing access **without sharing the password**.
-
-# - The recipient starts a *Device Flow* → obtains a `user_code`
-# - The owner (or an authorized user) logs in **directly on Keycloak**
-# - Our backend then retrieves an `access_token` via polling
-#     """)
-
-#     col1, col2 = st.columns(2)
-
-#     with col1:
-#         if st.button("1) Start device flow", use_container_width=True):
-#             r = api_post("/keycloak-sharing/device/start", {})
-#             if "device_code" in r:
-#                 st.session_state["kc_device"] = r
-#                 st.success("Device flow started")
-#             else:
-#                 st.error(r.get("detail", r))
-
-#         device = st.session_state.get("kc_device")
-#         if device:
-#             st.write("verification_uri:", device.get("verification_uri"))
-#             st.write("user_code:", device.get("user_code"))
-#             if device.get("verification_uri_complete"):
-#                 st.write("verification_uri_complete:", device.get("verification_uri_complete"))
-#             st.code(device.get("user_code", ""), language="text")
-
-#     with col2:
-#         st.markdown("2) After logging in on Keycloak, retrieve the token")
-#         if st.button("Poll for token", use_container_width=True):
-#             device = st.session_state.get("kc_device")
-#             if not device:
-#                 st.error("Start device flow first.")
-#                 return
-
-#             r = api_post("/keycloak-sharing/device/poll", {
-#                 "device_code": device["device_code"],
-#                 "interval": int(device.get("interval", 5)),
-#             })
-
-#             if "access_token" in r:
-#                 st.session_state["kc_token"] = r
-#                 st.success("Access token received")
-#             else:
-#                 st.error(r.get("detail", r))
-
-#         token = st.session_state.get("kc_token")
-#         if token:
-#             st.write("token_type:", token.get("token_type"))
-#             st.write("expires_in:", token.get("expires_in"))
-#             st.text_area("access_token", token.get("access_token", ""), height=180)
-
-
-# def page_register():
-#     st.title("📝 Zero-Knowledge Registration")
-#     st.info("🔐 Your password will NEVER be sent to the server. Only the ZKP public key is stored.")
-
-#     with st.form("register_form"):
-#         email = st.text_input("📧 Email")
-#         username = st.text_input("👤 Username")
-#         password = st.text_input("🔑 Master password", type="password")
-#         password2 = st.text_input("🔑 Confirm password", type="password")
-#         submitted = st.form_submit_button("📝 Register", use_container_width=True)
-
-#     if submitted:
-#         if not all([email, username, password]):
-#             st.error("All fields are required")
-#             return
-#         if password != password2:
-#             st.error("Passwords do not match")
-#             return
-
-#         with st.spinner("Generating ZKP public key (client side)..."):
-#             zkp_public_key_hex, zkp_salt_b64 = client_generate_public_key(password)
-#             master_salt_b64 = base64.b64encode(os.urandom(32)).decode()
-
-#         with st.spinner("Sending ZKP public key..."):
-#             result = api_post("/auth/register", {
-#                 "email": email,
-#                 "username": username,
-#                 "zkp_public_key": zkp_public_key_hex,
-#                 "zkp_salt": zkp_salt_b64,
-#                 "master_salt": master_salt_b64,
-#             })
-
-#         if "user_id" in result:
-#             st.success(f"✅ Registration successful! ID: {result['user_id']}")
-#             st.markdown("""
-#             <div class="success-box">
-#             ✅ <strong>Zero-Knowledge confirmed</strong>: Your password never left your browser.
-#             The server stores only Y = g^x mod p (your ZKP public key).
-#             </div>
-#             """, unsafe_allow_html=True)
-#         else:
-#             st.error(f"❌ Error: {result.get('detail', result)}")
-
-
-# def page_credentials():
-#     st.title("🔑 My Encrypted Credentials")
-#     token = st.session_state.jwt_token
-#     if not token:
-#         st.error("Not logged in")
-#         return
-
-#     creds = api_get("/credentials/", token=token)
-#     if isinstance(creds, list):
-#         if not creds:
-#             st.info("No credentials. Create one!")
-#         for c in creds:
-#             with st.expander(f"🔒 {c['name']} — {c.get('service_url', '')}"):
-#                 col1, col2 = st.columns(2)
-#                 with col1:
-#                     st.write(f"**Type:** {c['credential_type']}")
-#                     st.write(f"**Username:** {c.get('username', '—')}")
-#                     st.write(f"**Tags:** {c.get('tags', '—')}")
-#                 with col2:
-#                     st.write(f"**Created:** {time.strftime('%Y-%m-%d %H:%M', time.localtime(c['created_at']))}")
-#                     st.write(f"**Active shares:** {c.get('shares_count', 0)}")
-
-#                 if st.button(f"🔓 Decrypt locally", key=f"dec_{c['id']}"):
-#                     enc = api_get(f"/credentials/{c['id']}/encrypted", token=token)
-#                     if "encrypted_secret" in enc:
-#                         try:
-#                             secret = client_decrypt(enc["encrypted_secret"], st.session_state.master_password)
-#                             st.success(f"🔓 Secret: `{secret}`")
-#                         except Exception as e:
-#                             st.error(f"Decryption failed: {e}")
-#     else:
-#         st.error(f"API error: {creds}")
-
-
-# def page_new_credential():
-#     st.title("➕ New Credential")
-#     token = st.session_state.jwt_token
-#     if not token:
-#         st.error("Not logged in")
-#         return
-
-#     with st.form("new_cred_form"):
-#         name = st.text_input("📛 Name (e.g., DVWA Admin)")
-#         service_url = st.text_input("🌐 Service URL")
-#         username = st.text_input("👤 Username/Login")
-#         secret = st.text_input("🔑 Secret (password, API key...)", type="password")
-#         cred_type = st.selectbox("Type", ["password", "api_key", "token", "certificate"])
-#         tags = st.text_input("🏷️ Tags (comma separated)")
-#         submitted = st.form_submit_button("💾 Save (encrypted)", use_container_width=True)
-
-#     if submitted and name and secret:
-#         with st.spinner("Local AES-256-GCM encryption..."):
-#             encrypted = client_encrypt(secret, st.session_state.master_password, st.session_state.master_salt)
-
-#         with st.spinner("Secure storage..."):
-#             result = api_post("/credentials/", {
-#                 "name": name,
-#                 "service_url": service_url,
-#                 "username": username,
-#                 "credential_type": cred_type,
-#                 "encrypted_secret": encrypted,
-#                 "tags": tags,
-#             }, token=token)
-
-#         if "id" in result:
-#             st.success(f"✅ Credential created (ID: {result['id']}) — Secret encrypted, server never saw it.")
-#         else:
-#             st.error(f"❌ Error: {result}")
-
-
-# def page_share():
-#     st.title("🤝 Zero-Knowledge Secure Sharing")
-#     st.markdown("""
-#     > **How it works?**
-#     > 1. You decrypt the credential locally
-#     > 2. You re‑encrypt it with an ephemeral (one‑time) key
-#     > 3. A secure token is generated — only the recipient can use it
-#     > 4. After use, the token is automatically invalidated
-#     """)
-
-#     token = st.session_state.jwt_token
-#     if not token:
-#         st.error("Not logged in")
-#         return
-
-#     creds = api_get("/credentials/", token=token)
-#     if not isinstance(creds, list) or not creds:
-#         st.info("No credentials to share.")
-#         return
-
-#     cred_options = {f"{c['name']} (ID:{c['id']})": c['id'] for c in creds}
-
-#     with st.form("share_form"):
-#         selected = st.selectbox("🔒 Credential to share", list(cred_options.keys()))
-#         recipient_email = st.text_input("📧 Recipient email")
-#         secret_to_share = st.text_input("🔑 Secret to share (decrypted locally)", type="password",
-#                                          help="Enter the secret as it will be received by the recipient")
-#         permission = st.selectbox("Permission", ["read_once", "read"])
-#         ttl_hours = st.slider("⏱️ Validity duration (hours)", 1, 168, 24)
-#         max_uses = st.number_input("Max uses", 1, 10, 1)
-#         submitted = st.form_submit_button("🤝 Create share", use_container_width=True)
-
-#     if submitted and recipient_email and secret_to_share:
-#         cred_id = cred_options[selected]
-
-#     # 1) Create intent to get share_token (this token will be used to encrypt payload)
-#         with st.spinner("Creating share intent..."):
-#             intent = api_post("/sharing/create-intent", {
-#                 "credential_id": cred_id,
-#                 "recipient_email": recipient_email,
-#                 "permission": permission,
-#                 "ttl_hours": ttl_hours,
-#                 "max_uses": int(max_uses),
-#             }, token=token)
-
-#         if "share_token" not in intent:
-#             st.error(f"❌ Intent error: {intent}")
-#             return
-
-#         share_token = intent["share_token"]
-
-#     # 2) Encrypt locally with share_token (NOT with a random ephemeral key)
-#         with st.spinner("Local encryption with share token..."):
-#             plaintext = json.dumps({"password": secret_to_share}, ensure_ascii=False)
-#             encrypted_payload = encrypt_for_share(plaintext, share_token)
-
-#     # 3) Finalize
-#         with st.spinner("Finalizing share..."):
-#             fin = api_post("/sharing/finalize", {
-#                 "token": share_token,
-#                 "encrypted_payload": encrypted_payload,
-#             }, token=token)
-
-#         if "message" in fin:
-#             st.success("✅ Share created and finalized successfully!")
-#             st.markdown("### 🔑 Token to send to the recipient")
-#             st.code(share_token, language="text")
-#             st.warning(f"⚠️ Send this token via a secure channel to {recipient_email}")
-#         else:
-#             st.error(f"❌ Finalize error: {fin}")
-
-
-
-
-
-
-
-#     # 👇 All code that uses form fields MUST be inside this block
-#     # if submitted and recipient_email and secret_to_share:
-#     #     cred_id = cred_options[selected]
-
-#     #     with st.spinner("Generating ephemeral key..."):
-#     #         ephemeral_key = base64.urlsafe_b64encode(os.urandom(32)).decode()
-#     #         encrypted_payload = encrypt_for_share(secret_to_share, ephemeral_key)
-
-#     #     with st.spinner("Creating secure share..."):
-#     #         result = api_post("/sharing/create", {
-#     #             "credential_id": cred_id,
-#     #             "recipient_email": recipient_email,
-#     #             "permission": permission,
-#     #             "ttl_hours": ttl_hours,
-#     #             "max_uses": int(max_uses),
-#     #             "encrypted_payload": encrypted_payload,
-#     #             "share_key_token": ephemeral_key,   # we send the ephemeral key
-#     #         }, token=token)
-
-#     #     if "share_token" in result:
-#     #         st.success("✅ Share created successfully!")
-#     #         st.markdown("### 🔑 Token to send to the recipient")
-#     #         st.code(result["share_token"], language="text")
-#     #         st.warning(f"⚠️ Send this token via a secure channel (Signal, encrypted email, etc.) to {recipient_email}")
-#     #         st.info(f"⏱️ Expires in {ttl_hours}h | Max uses: {max_uses}")
-#     #     else:
-#     #         st.error(f"❌ Error: {result}")
-
-
-
-# def page_relay_login():
-#     st.title("🚪 Secure Relay Login (without revealing the password)")
-#     st.markdown("""
-#     This mode allows the recipient to log in to a *classic* app (that asks for username/password)
-#     **without ever seeing the password**.
-
-#     The backend uses a headless browser (Playwright) to perform the login, then returns session cookies.
-#     """)
-
-#     with st.form("relay_form"):
-#         token_input = st.text_input("🔑 Share token")
-#         requester_email = st.text_input("📧 Your email")
-#         submitted = st.form_submit_button("🔐 Login via Relay", use_container_width=True)
-
-#     if submitted and token_input and requester_email:
-#         with st.spinner("Relay login..."):
-#             result = api_post("/sharing/relay-login", {
-#                 "token": token_input,
-#                 "requester_email": requester_email,
-#             })
-
-#         if "cookies" in result:
-#             st.success("✅ Relay login OK. Session cookies retrieved.")
-#             st.write("URL after login:", result.get("relay", {}).get("current_url"))
-#             st.write("Title:", result.get("relay", {}).get("title"))
-#             st.json(result.get("cookies", []))
-#             st.warning("""
-#             To use these cookies in a normal browser, you need an extension or a script (depending on the browser).
-#             Streamlit cannot automatically inject these cookies into your browser.
-#             """)
-
-#         elif "localStorage" in result and result["localStorage"]:
-#             st.write("LocalStorage (may contain tokens):", result["localStorage"])
-#         else:
-#             st.error(f"❌ Relay login failed: {result.get('detail', result)}")
-
-
-
-
-
-
-
-# def page_access_share():
-#     st.title("📩 Access a Shared Credential")
-#     st.markdown("""
-#     > Enter the received share token. The secret will be transmitted encrypted
-#     > and decrypted **only in your browser**.
-#     """)
-
-#     with st.form("access_form"):
-#         token_input = st.text_input("🔑 Share token", help="Token received from the owner")
-#         requester_email = st.text_input("📧 Your email")
-#         submitted = st.form_submit_button("🔓 Access", use_container_width=True)
-
-#     if submitted and token_input and requester_email:
-#         with st.spinner("Zero‑Trust verification..."):
-#             result = api_post("/sharing/access", {
-#                 "token": token_input,
-#                 "requester_email": requester_email,
-#             })
-#             st.write("API response:", result)   # Temporary line to be removed later
-
-#         if "encrypted_payload" in result:
-#             try:
-#                 decrypted_secret = decrypt_from_share(result["encrypted_payload"], result["decryption_key"])
-#                 st.success(f"✅ Access granted — Credential: **{result['credential_name']}**")
-#                 st.markdown(f"""
-#                 <div class="success-box">
-#                 <strong>Service:</strong> {result.get('service_url', '—')}<br>
-#                 <strong>Username:</strong> {result.get('username', '—')}<br>
-#                 <strong>🔓 Secret:</strong> <code>{decrypted_secret}</code>
-#                 </div>
-#                 """, unsafe_allow_html=True)
-#                 if result.get("permission") == "read_once":
-#                     st.warning("⚠️ One‑time use token — invalidated after this access")
-#             except Exception as e:
-#                 st.error(f"❌ Local decryption failed: {e}")
-#         else:
-#             st.error(f"❌ Access denied: {result.get('detail', result)}")
-
-
-# def page_audit():
-#     st.title("📋 Audit Trail")
-#     token = st.session_state.jwt_token
-#     if not token:
-#         st.error("Not logged in")
-#         return
-
-#     shares = api_get("/sharing/my-shares", token=token)
-#     if not isinstance(shares, list):
-#         st.error("API error")
-#         return
-#     if not shares:
-#         st.info("No active shares.")
-#         return
-
-#     for s in shares:
-#         status = "✅ Active" if not s.get("is_expired") else "⏰ Expired"
-#         with st.expander(f"{status} | {s['credential_name']} → {s['recipient_email']}"):
-#             col1, col2 = st.columns(2)
-#             with col1:
-#                 st.write(f"**Permission:** {s['permission']}")
-#                 st.write(f"**Uses:** {s['use_count']}/{s['max_uses']}")
-#                 st.write(f"**Expires:** {time.strftime('%Y-%m-%d %H:%M', time.localtime(s['expires_at']))}")
-#             with col2:
-#                 if st.button("📋 View detailed audit", key=f"audit_{s['share_id']}"):
-#                     audit = api_get(f"/sharing/audit/{s['share_id']}", token=token)
-#                     st.json(audit)
-#                 if st.button("🚫 Revoke", key=f"rev_{s['share_id']}"):
-#                     res = requests.delete(
-#                         f"{API_URL}/sharing/revoke/{s['share_id']}",
-#                         headers={"Authorization": f"Bearer {token}"}
-#                     ).json()
-#                     st.success(res.get("message", "Revoked"))
-#                     st.rerun()
-
-
-# def page_about_zkp():
-#     st.title("ℹ️ Zero-Knowledge Proof — Explanations")
-#     st.markdown("""
-#     ## What is a Zero‑Knowledge Proof (ZKP)?
-
-#     A **Zero‑Knowledge Proof** allows one party (the **prover**) to convince
-#     another party (the **verifier**) that they know a secret, **without revealing that secret**.
-
-#     ---
-
-#     ## Schnorr Protocol (implemented here)
-
-#     | Step | Actor | Action |
-#     |------|-------|--------|
-#     | Setup | Alice | Chooses `x` (secret), computes `Y = g^x mod p` (public) |
-#     | 1. Commitment | Alice | Chooses random `r`, sends `Y_r = g^r mod p` |
-#     | 2. Challenge | Server | Computes `c = H(Y ‖ Y_r ‖ email)` |
-#     | 3. Response | Alice | Computes `s = r - c·x mod q`, sends `s` |
-#     | 4. Verify | Server | Checks `g^s · Y^c ≡ Y_r (mod p)` |
-
-#     ### Guaranteed properties:
-#     - **Completeness**: An honest prover always convinces the verifier
-#     - **Soundness**: A dishonest prover cannot cheat the verifier
-#     - **Zero‑Knowledge**: The verifier learns nothing about `x`
-
-#     ---
-
-#     ## Zero‑Trust Architecture
-                
-#  ## Zero‑Trust Architecture
-# Client Browser Server Database
-# ───────────── ────────── ───────────────
-# password (local) → Y = g^x mod p → Y (public key)
-# AES encrypt(secret) → encrypted blob → encrypted blob
-# r (local random) → challenge c → challenge (TTL 5min)
-# s = r-cx mod q → verify g^s·Y^c=Y_r → nothing (token invalidated)
-
-                
-
-# ### Least‑privilege principle:
-# - Each credential has its own keys
-# - Share tokens are one‑time use
-# - Full audit of every access
-# - Instant revocation
-
-# ---
-
-# ## Technologies used
-
-# | Component | Technology |
-# |-----------|------------|
-# | ZKP | Schnorr Protocol (2048‑bit Schnorr group) |
-# | Encryption | AES-256-GCM (AEAD) |
-# | Key derivation | PBKDF2-HMAC-SHA256 (310,000 iterations) |
-# | Auth tokens | JWT HS256 |
-# | Backend | FastAPI + SQLAlchemy |
-# | Frontend | Streamlit |
-# | Architecture | Zero‑Trust |
-# """)
-
-
-# if __name__ == "__main__":
-#     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# #version anglaise de dashboard.py
-# """
-# ZKP Secure Credential Sharing - Streamlit Dashboard
-# =====================================================
-# Complete user interface for Part 2.
-# Implements the CLIENT side of the ZKP protocol:
-#   - Derivation of secret x on the client side
-#   - Generation of commitment g^r mod p
-#   - Computation of response s = r - c*x mod q
-#   - Local AES-256-GCM encryption/decryption
-# """
-
-# import base64
-# import hashlib
-# import json
-# import os
-# import secrets
-# import time
-# from typing import Optional
-
-# import requests
-# import streamlit as st
-# from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-# # ─── Configuration ────────────────────────────────────────────────────────────
-
-# API_URL = os.getenv("ZKP_API_URL", "http://localhost:8001")
-
-# # ZKP parameters (identical to the server)
-# P = int(
-#     "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1"
-#     "29024E088A67CC74020BBEA63B139B22514A08798E3404DD"
-#     "EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245"
-#     "E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED"
-#     "EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3D"
-#     "C2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F"
-#     "83655D23DCA3AD961C62F356208552BB9ED529077096966D"
-#     "670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B"
-#     "E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9"
-#     "DE2BCBF6955817183995497CEA956AE515D2261898FA0510"
-#     "15728E5A8AACAA68FFFFFFFFFFFFFFFF",
-#     16,
-# )
-# G = 2
-# Q = (P - 1) // 2
-
-
-# # ─── Client‑Side ZKP Functions ────────────────────────────────────────────────
-
-# def client_derive_secret(password: str, salt_b64: str) -> int:
-#     """Derive secret x from password (client side)."""
-#     salt = base64.b64decode(salt_b64)
-#     dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations=310_000, dklen=32)
-#     return int.from_bytes(dk, "big") % (Q - 1) + 1
-
-
-# def client_generate_public_key(password: str) -> tuple:
-#     """Generate (Y=g^x mod p, salt_b64)."""
-#     salt = os.urandom(32)
-#     x = client_derive_secret(password, base64.b64encode(salt).decode())
-#     Y = pow(G, x, P)
-#     return hex(Y), base64.b64encode(salt).decode()
-
-
-# def client_create_commitment() -> tuple:
-#     """Generate (Y_r=g^r mod p, r)."""
-#     r = secrets.randbelow(Q - 1) + 1
-#     Y_r = pow(G, r, P)
-#     return hex(Y_r), r
-
-
-# def client_compute_response(password: str, salt_b64: str, r: int, challenge_hex: str) -> str:
-#     """Compute s = r - c*x mod q."""
-#     x = client_derive_secret(password, salt_b64)
-#     c = int(challenge_hex, 16)
-#     s = (r - c * x) % Q
-#     return hex(s)
-
-
-# def client_encrypt(plaintext: str, password: str, salt_b64: str) -> str:
-#     """Encrypt locally with AES-256-GCM (key derived from master password)."""
-#     salt = base64.b64decode(salt_b64)
-#     key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations=310_000, dklen=32)
-#     nonce = os.urandom(12)
-#     aesgcm = AESGCM(key)
-#     ct = aesgcm.encrypt(nonce, plaintext.encode(), None)
-#     return json.dumps({
-#         "salt": salt_b64,
-#         "nonce": base64.b64encode(nonce).decode(),
-#         "ciphertext": base64.b64encode(ct).decode(),
-#     })
-
-
-# def client_decrypt(encrypted_json: str, password: str) -> str:
-#     """Decrypt locally with AES-256-GCM."""
-#     d = json.loads(encrypted_json)
-#     salt = base64.b64decode(d["salt"])
-#     nonce = base64.b64decode(d["nonce"])
-#     ct = base64.b64decode(d["ciphertext"])
-#     key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations=310_000, dklen=32)
-#     aesgcm = AESGCM(key)
-#     return aesgcm.decrypt(nonce, ct, None).decode()
-
-
-# # def _b64decode_any(b64_str: str) -> bytes:
-# #     """
-# #     Décode base64 standard OU urlsafe en ajoutant le padding correct.
-# #     """
-# #     s = b64_str.strip()
-# #     # padding base64 correct (multiple de 4)
-# #     s += "=" * (-len(s) % 4)
-# #     try:
-# #         return base64.urlsafe_b64decode(s.encode())
-# #     except Exception:
-# #         # fallback standard
-# #         return base64.b64decode(s.encode())
-
-# # def encrypt_for_share(plaintext: str, share_token: str) -> str:
-# #     """
-# #     Chiffre avec AES-256-GCM en utilisant la clé dérivée du token.
-# #     Nonce = 12 bytes (obligatoire / standard GCM).
-# #     """
-# #     raw_key_full = _b64decode_any(share_token)
-# #     raw_key = raw_key_full[:32]
-# #     if len(raw_key) != 32:
-# #         raise ValueError("Share token invalide: impossible d'obtenir une clé 32 bytes")
-
-# #     nonce = os.urandom(12)
-# #     aesgcm = AESGCM(raw_key)
-# #     ct = aesgcm.encrypt(nonce, plaintext.encode(), None)
-
-# #     return json.dumps({
-# #         "nonce": base64.b64encode(nonce).decode(),
-# #         "ciphertext": base64.b64encode(ct).decode(),
-# #     })
-
-# # def decrypt_from_share(encrypted_json: str, share_token: str) -> str:
-# #     d = json.loads(encrypted_json)
-# #     try:
-# #         raw_key_full = _b64decode_any(share_token)
-# #         raw_key = raw_key_full[:32]
-# #         nonce = _b64decode_any(d["nonce"])
-# #         ct = _b64decode_any(d["ciphertext"])
-# #         aesgcm = AESGCM(raw_key)
-# #         plain = aesgcm.decrypt(nonce, ct, None).decode()
-# #         return plain
-# #     except Exception as e:
-# #         st.error(f"Exception type: {type(e).__name__}, message: {str(e)}")
-# #         raise  # ou return None, selon votre besoin
-
-
-
-# def _b64decode_urlsafe_padded(s: str) -> bytes:
-#     s = (s or "").strip()
-#     s += "=" * (-len(s) % 4)
-#     return base64.urlsafe_b64decode(s.encode("utf-8"))
-
-
-# def encrypt_for_share(plaintext: str, share_token: str) -> str:
-#     """Chiffre un secret avec un token de partage éphémère."""
-#     raw = _b64decode_urlsafe_padded(share_token)
-#     key = raw[:32]
-#     if len(key) != 32:
-#         raise ValueError("Token de partage invalide (clé incorrecte).")
-
-#     nonce = os.urandom(12)
-#     aesgcm = AESGCM(key)
-#     ct = aesgcm.encrypt(nonce, plaintext.encode(), None)
-#     return json.dumps({
-#         "nonce": base64.b64encode(nonce).decode(),
-#         "ciphertext": base64.b64encode(ct).decode(),
-#     })
-
-
-# def decrypt_from_share(encrypted_json: str, share_token: str) -> str:
-#     """Déchiffre avec le token de partage."""
-#     d = json.loads(encrypted_json)
-#     raw = _b64decode_urlsafe_padded(share_token)
-#     key = raw[:32]
-#     if len(key) != 32:
-#         raise ValueError("Token de partage invalide (clé incorrecte).")
-
-#     nonce = base64.b64decode(d["nonce"])
-#     ct = base64.b64decode(d["ciphertext"])
-#     aesgcm = AESGCM(key)
-#     return aesgcm.decrypt(nonce, ct, None).decode()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# # ─── API Helpers ──────────────────────────────────────────────────────────────
-
-# def api_post(endpoint: str, data: dict, token: str = None) -> dict:
-#     headers = {}
-#     if token:
-#         headers["Authorization"] = f"Bearer {token}"
-#     try:
-#         r = requests.post(f"{API_URL}{endpoint}", json=data, headers=headers, timeout=20)
-
-#         # Toujours renvoyer statut + body si ce n'est pas JSON
-#         content_type = (r.headers.get("content-type") or "").lower()
-#         if "application/json" not in content_type:
-#             return {
-#                 "error": "Non-JSON response from API",
-#                 "status_code": r.status_code,
-#                 "content_type": content_type,
-#                 "text": r.text[:2000],  # pour debug
-#                 "endpoint": endpoint,
-#             }
-
-#         return r.json()
-#     except Exception as e:
-#         return {"error": str(e), "endpoint": endpoint}
-
-
-# def api_get(endpoint: str, token: str = None) -> dict:
-#     headers = {}
-#     if token:
-#         headers["Authorization"] = f"Bearer {token}"
-#     try:
-#         r = requests.get(f"{API_URL}{endpoint}", headers=headers, timeout=15)
-#         return r.json()
-#     except Exception as e:
-#         return {"error": str(e)}
-
-
-# # ─── Streamlit UI ─────────────────────────────────────────────────────────────
-
-# def main():
-#     st.set_page_config(
-#         page_title="🔐 ZKP Credential Sharing",
-#         page_icon="🔐",
-#         layout="wide",
-#         initial_sidebar_state="expanded",
-#     )
-
-#     # Custom CSS
-#     st.markdown("""
-#     <style>
-#     .zkp-badge { background: linear-gradient(135deg,#1a1a2e,#16213e);
-#                  color:#00d4ff; padding:4px 12px; border-radius:20px;
-#                  font-size:12px; font-weight:bold; border:1px solid #00d4ff; }
-#     .success-box { background:#0a3d2e; border-left:4px solid #00ff88;
-#                    padding:12px; border-radius:4px; margin:8px 0; }
-#     .warning-box { background:#3d2e0a; border-left:4px solid #ffaa00;
-#                    padding:12px; border-radius:4px; margin:8px 0; }
-#     </style>
-#     """, unsafe_allow_html=True)
-
-#     # ─── Sidebar ──────────────────────────────────────────────────────────────
-#     with st.sidebar:
-#         st.markdown("## 🔐 ZKP Credential Sharing")
-#         st.markdown('<span class="zkp-badge">Zero-Knowledge Proof</span>', unsafe_allow_html=True)
-#         st.markdown("---")
-
-#         if "jwt_token" not in st.session_state:
-#             st.session_state.jwt_token = None
-#             st.session_state.current_user = None
-#             st.session_state.master_password = None
-#             st.session_state.zkp_salt = None
-#             st.session_state.master_salt = None
-
-#         if st.session_state.jwt_token:
-#             st.success(f"✅ Logged in: {st.session_state.current_user}")
-#             if st.button("🚪 Logout"):
-#                 for k in ["jwt_token", "current_user", "master_password", "zkp_salt", "master_salt"]:
-#                     st.session_state[k] = None
-#                 st.rerun()
-#             menu = st.radio("Navigation", [
-#                 "🔑 My Credentials",
-#                 "➕ New Credential",
-#                 "🤝 Share",
-#                 "📩 Access a Share",
-#                 "🚪 Relay Login (no password reveal)",
-#                 "🔐 Keycloak Passwordless Share (Device Flow)",
-#                 "📋 Audit Trail",
-#                 "ℹ️ About ZKP",
-#             ])
-#         else:
-#             menu = st.radio("Navigation", ["🔐 ZKP Login", "📝 Register", "ℹ️ About ZKP"])
-
-#     # ─── Pages ────────────────────────────────────────────────────────────────
-
-#     if menu == "🔐 ZKP Login":
-#         page_login()
-#     elif menu == "📝 Register":
-#         page_register()
-#     elif menu == "🔑 My Credentials":
-#         page_credentials()
-#     elif menu == "➕ New Credential":
-#         page_new_credential()
-#     elif menu == "🤝 Share":
-#         page_share()
-#     elif menu == "📩 Access a Share":
-#         page_access_share()
-#     elif menu == "📋 Audit Trail":
-#         page_audit()
-#     elif menu == "ℹ️ About ZKP":
-#         page_about_zkp()
-#     elif menu == "🚪 Relay Login (no password reveal)":
-#         page_relay_login()
-#     elif menu == "🔐 Keycloak Passwordless Share (Device Flow)":
-#         page_keycloak_device_flow()
-
-
-# def page_login():
-#     st.title("🔐 Zero-Knowledge Proof Login")
-#     st.markdown("""
-#     > **ZKP Principle**: You prove you know your password
-#     > **without ever sending it** to the server. The Schnorr protocol guarantees
-#     > that any adversary intercepting communications cannot recover your secret.
-#     """)
-
-#     col1, col2 = st.columns([1, 1])
-#     with col1:
-#         st.markdown("### Schnorr Protocol Steps")
-#         st.markdown("""
-#         1. 🎲 **Commitment**: You generate random `r` → send `g^r mod p`
-#         2. 🎯 **Challenge**: Server generates `c = H(Y || g^r || email)`
-#         3. 📐 **Response**: You compute `s = r - c·x mod q`
-#         4. ✅ **Verification**: Server checks `g^s · Y^c ≡ g^r (mod p)`
-#         """)
-
-#     with col2:
-#         with st.form("login_form"):
-#             email = st.text_input("📧 Email")
-#             password = st.text_input("🔑 Password (stays local)", type="password")
-#             submitted = st.form_submit_button("🚀 ZKP Login", use_container_width=True)
-
-#         if submitted and email and password:
-#             with st.spinner("Retrieving salts..."):
-#                 salts = api_get(f"/auth/salts/{email}")
-#             if "error" in salts or "zkp_salt" not in salts:
-#                 st.error("❌ User not found")
-#                 return
-
-#             zkp_salt = salts["zkp_salt"]
-#             master_salt = salts["master_salt"]
-
-#             with st.spinner("Generating ZKP commitment..."):
-#                 commitment_hex, r = client_create_commitment()
-#                 resp_challenge = api_post("/auth/challenge", {
-#                     "email": email,
-#                     "commitment": commitment_hex,
-#                 })
-
-#             if "error" in resp_challenge or "challenge_id" not in resp_challenge:
-#                 st.error(f"❌ Challenge error: {resp_challenge}")
-#                 return
-
-#             challenge_id = resp_challenge["challenge_id"]
-#             challenge_hex = resp_challenge["challenge_value"]
-
-#             with st.spinner("Computing ZKP proof..."):
-#                 response_hex = client_compute_response(password, zkp_salt, r, challenge_hex)
-#                 resp_verify = api_post("/auth/verify", {
-#                     "email": email,
-#                     "challenge_id": challenge_id,
-#                     "response": response_hex,
-#                 })
-
-#             if "access_token" in resp_verify:
-#                 st.session_state.jwt_token = resp_verify["access_token"]
-#                 st.session_state.current_user = resp_verify["username"]
-#                 st.session_state.master_password = password
-#                 st.session_state.zkp_salt = zkp_salt
-#                 st.session_state.master_salt = master_salt
-#                 st.success(f"✅ ZKP login successful! Welcome {resp_verify['username']}")
-#                 st.balloons()
-#                 st.rerun()
-#             else:
-#                 st.error(f"❌ Authentication failed: {resp_verify.get('detail', resp_verify)}")
-
-
-# def page_keycloak_device_flow():
-#     st.title("🔐 Keycloak Passwordless Share (Device Authorization Grant)")
-#     st.markdown("""
-# Ce module implémente le **choix B** : partager l’accès **sans partager le mot de passe**.
-
-# - Le destinataire démarre un *Device Flow* → obtient un `user_code`
-# - Le propriétaire (ou un utilisateur autorisé) se connecte **directement sur Keycloak**
-# - Notre backend récupère ensuite un `access_token` via polling
-#     """)
-
-#     col1, col2 = st.columns(2)
-
-#     with col1:
-#         if st.button("1) Start device flow", use_container_width=True):
-#             r = api_post("/keycloak-sharing/device/start", {})
-#             if "device_code" in r:
-#                 st.session_state["kc_device"] = r
-#                 st.success("Device flow started")
-#             else:
-#                 st.error(r.get("detail", r))
-
-#         device = st.session_state.get("kc_device")
-#         if device:
-#             st.write("verification_uri:", device.get("verification_uri"))
-#             st.write("user_code:", device.get("user_code"))
-#             if device.get("verification_uri_complete"):
-#                 st.write("verification_uri_complete:", device.get("verification_uri_complete"))
-#             st.code(device.get("user_code", ""), language="text")
-
-#     with col2:
-#         st.markdown("2) Après login sur Keycloak, récupère le token")
-#         if st.button("Poll for token", use_container_width=True):
-#             device = st.session_state.get("kc_device")
-#             if not device:
-#                 st.error("Start device flow first.")
-#                 return
-
-#             r = api_post("/keycloak-sharing/device/poll", {
-#                 "device_code": device["device_code"],
-#                 "interval": int(device.get("interval", 5)),
-#             })
-
-#             if "access_token" in r:
-#                 st.session_state["kc_token"] = r
-#                 st.success("Access token received")
-#             else:
-#                 st.error(r.get("detail", r))
-
-#         token = st.session_state.get("kc_token")
-#         if token:
-#             st.write("token_type:", token.get("token_type"))
-#             st.write("expires_in:", token.get("expires_in"))
-#             st.text_area("access_token", token.get("access_token", ""), height=180)
-
-
-# def page_register():
-#     st.title("📝 Zero-Knowledge Registration")
-#     st.info("🔐 Your password will NEVER be sent to the server. Only the ZKP public key is stored.")
-
-#     with st.form("register_form"):
-#         email = st.text_input("📧 Email")
-#         username = st.text_input("👤 Username")
-#         password = st.text_input("🔑 Master password", type="password")
-#         password2 = st.text_input("🔑 Confirm password", type="password")
-#         submitted = st.form_submit_button("📝 Register", use_container_width=True)
-
-#     if submitted:
-#         if not all([email, username, password]):
-#             st.error("All fields are required")
-#             return
-#         if password != password2:
-#             st.error("Passwords do not match")
-#             return
-
-#         with st.spinner("Generating ZKP public key (client side)..."):
-#             zkp_public_key_hex, zkp_salt_b64 = client_generate_public_key(password)
-#             master_salt_b64 = base64.b64encode(os.urandom(32)).decode()
-
-#         with st.spinner("Sending ZKP public key..."):
-#             result = api_post("/auth/register", {
-#                 "email": email,
-#                 "username": username,
-#                 "zkp_public_key": zkp_public_key_hex,
-#                 "zkp_salt": zkp_salt_b64,
-#                 "master_salt": master_salt_b64,
-#             })
-
-#         if "user_id" in result:
-#             st.success(f"✅ Registration successful! ID: {result['user_id']}")
-#             st.markdown("""
-#             <div class="success-box">
-#             ✅ <strong>Zero-Knowledge confirmed</strong>: Your password never left your browser.
-#             The server stores only Y = g^x mod p (your ZKP public key).
-#             </div>
-#             """, unsafe_allow_html=True)
-#         else:
-#             st.error(f"❌ Error: {result.get('detail', result)}")
-
-
-# def page_credentials():
-#     st.title("🔑 My Encrypted Credentials")
-#     token = st.session_state.jwt_token
-#     if not token:
-#         st.error("Not logged in")
-#         return
-
-#     creds = api_get("/credentials/", token=token)
-#     if isinstance(creds, list):
-#         if not creds:
-#             st.info("No credentials. Create one!")
-#         for c in creds:
-#             with st.expander(f"🔒 {c['name']} — {c.get('service_url', '')}"):
-#                 col1, col2 = st.columns(2)
-#                 with col1:
-#                     st.write(f"**Type:** {c['credential_type']}")
-#                     st.write(f"**Username:** {c.get('username', '—')}")
-#                     st.write(f"**Tags:** {c.get('tags', '—')}")
-#                 with col2:
-#                     st.write(f"**Created:** {time.strftime('%Y-%m-%d %H:%M', time.localtime(c['created_at']))}")
-#                     st.write(f"**Active shares:** {c.get('shares_count', 0)}")
-
-#                 if st.button(f"🔓 Decrypt locally", key=f"dec_{c['id']}"):
-#                     enc = api_get(f"/credentials/{c['id']}/encrypted", token=token)
-#                     if "encrypted_secret" in enc:
-#                         try:
-#                             secret = client_decrypt(enc["encrypted_secret"], st.session_state.master_password)
-#                             st.success(f"🔓 Secret: `{secret}`")
-#                         except Exception as e:
-#                             st.error(f"Decryption failed: {e}")
-#     else:
-#         st.error(f"API error: {creds}")
-
-
-# def page_new_credential():
-#     st.title("➕ New Credential")
-#     token = st.session_state.jwt_token
-#     if not token:
-#         st.error("Not logged in")
-#         return
-
-#     with st.form("new_cred_form"):
-#         name = st.text_input("📛 Name (e.g., DVWA Admin)")
-#         service_url = st.text_input("🌐 Service URL")
-#         username = st.text_input("👤 Username/Login")
-#         secret = st.text_input("🔑 Secret (password, API key...)", type="password")
-#         cred_type = st.selectbox("Type", ["password", "api_key", "token", "certificate"])
-#         tags = st.text_input("🏷️ Tags (comma separated)")
-#         submitted = st.form_submit_button("💾 Save (encrypted)", use_container_width=True)
-
-#     if submitted and name and secret:
-#         with st.spinner("Local AES-256-GCM encryption..."):
-#             encrypted = client_encrypt(secret, st.session_state.master_password, st.session_state.master_salt)
-
-#         with st.spinner("Secure storage..."):
-#             result = api_post("/credentials/", {
-#                 "name": name,
-#                 "service_url": service_url,
-#                 "username": username,
-#                 "credential_type": cred_type,
-#                 "encrypted_secret": encrypted,
-#                 "tags": tags,
-#             }, token=token)
-
-#         if "id" in result:
-#             st.success(f"✅ Credential created (ID: {result['id']}) — Secret encrypted, server never saw it.")
-#         else:
-#             st.error(f"❌ Error: {result}")
-
-
-# def page_share():
-#     st.title("🤝 Zero-Knowledge Secure Sharing")
-#     st.markdown("""
-#     > **How it works?**
-#     > 1. You decrypt the credential locally
-#     > 2. You re‑encrypt it with an ephemeral (one‑time) key
-#     > 3. A secure token is generated — only the recipient can use it
-#     > 4. After use, the token is automatically invalidated
-#     """)
-
-#     token = st.session_state.jwt_token
-#     if not token:
-#         st.error("Not logged in")
-#         return
-
-#     creds = api_get("/credentials/", token=token)
-#     if not isinstance(creds, list) or not creds:
-#         st.info("No credentials to share.")
-#         return
-
-#     cred_options = {f"{c['name']} (ID:{c['id']})": c['id'] for c in creds}
-
-#     with st.form("share_form"):
-#         selected = st.selectbox("🔒 Credential to share", list(cred_options.keys()))
-#         recipient_email = st.text_input("📧 Recipient email")
-#         secret_to_share = st.text_input("🔑 Secret to share (decrypted locally)", type="password",
-#                                          help="Enter the secret as it will be received by the recipient")
-#         permission = st.selectbox("Permission", ["read_once", "read"])
-#         ttl_hours = st.slider("⏱️ Validity duration (hours)", 1, 168, 24)
-#         max_uses = st.number_input("Max uses", 1, 10, 1)
-#         submitted = st.form_submit_button("🤝 Create share", use_container_width=True)
-
-#     if submitted and recipient_email and secret_to_share:
-#         cred_id = cred_options[selected]
-
-#     # 1) Create intent to get share_token (this token will be used to encrypt payload)
-#         with st.spinner("Création de l'intent de partage..."):
-#             intent = api_post("/sharing/create-intent", {
-#                 "credential_id": cred_id,
-#                 "recipient_email": recipient_email,
-#                 "permission": permission,
-#                 "ttl_hours": ttl_hours,
-#                 "max_uses": int(max_uses),
-#             }, token=token)
-
-#         if "share_token" not in intent:
-#             st.error(f"❌ Erreur intent: {intent}")
-#             return
-
-#         share_token = intent["share_token"]
-
-#     # 2) Encrypt locally with share_token (NOT with a random ephemeral key)
-#         with st.spinner("Chiffrement local avec le token de partage..."):
-#             plaintext = json.dumps({"password": secret_to_share}, ensure_ascii=False)
-#             encrypted_payload = encrypt_for_share(plaintext, share_token)
-
-#     # 3) Finalize
-#         with st.spinner("Finalisation du partage..."):
-#             fin = api_post("/sharing/finalize", {
-#                 "token": share_token,
-#                 "encrypted_payload": encrypted_payload,
-#             }, token=token)
-
-#         if "message" in fin:
-#             st.success("✅ Partage créé et finalisé avec succès !")
-#             st.markdown("### 🔑 Token à envoyer au destinataire")
-#             st.code(share_token, language="text")
-#             st.warning(f"⚠️ Envoyez ce token par un canal sécurisé à {recipient_email}")
-#         else:
-#             st.error(f"❌ Erreur finalize: {fin}")
-
-
-
-
-
-
-
-#     # 👇 Tout le code qui utilise les champs du formulaire DOIT être dans ce bloc
-#     # if submitted and recipient_email and secret_to_share:
-#     #     cred_id = cred_options[selected]
-
-#     #     with st.spinner("Generating ephemeral key..."):
-#     #         ephemeral_key = base64.urlsafe_b64encode(os.urandom(32)).decode()
-#     #         encrypted_payload = encrypt_for_share(secret_to_share, ephemeral_key)
-
-#     #     with st.spinner("Creating secure share..."):
-#     #         result = api_post("/sharing/create", {
-#     #             "credential_id": cred_id,
-#     #             "recipient_email": recipient_email,
-#     #             "permission": permission,
-#     #             "ttl_hours": ttl_hours,
-#     #             "max_uses": int(max_uses),
-#     #             "encrypted_payload": encrypted_payload,
-#     #             "share_key_token": ephemeral_key,   # on envoie la clé éphémère
-#     #         }, token=token)
-
-#     #     if "share_token" in result:
-#     #         st.success("✅ Share created successfully!")
-#     #         st.markdown("### 🔑 Token to send to the recipient")
-#     #         st.code(result["share_token"], language="text")
-#     #         st.warning(f"⚠️ Send this token via a secure channel (Signal, encrypted email, etc.) to {recipient_email}")
-#     #         st.info(f"⏱️ Expires in {ttl_hours}h | Max uses: {max_uses}")
-#     #     else:
-#     #         st.error(f"❌ Error: {result}")
-
-
-
-# def page_relay_login():
-#     st.title("🚪 Secure Relay Login (sans révéler le mot de passe)")
-#     st.markdown("""
-#     Ce mode permet au destinataire de se connecter à une app *classique* (qui demande username/password)
-#     **sans jamais voir le mot de passe**.
-
-#     Le backend utilise un navigateur headless (Playwright) pour effectuer le login, puis renvoie des cookies de session.
-#     """)
-
-#     with st.form("relay_form"):
-#         token_input = st.text_input("🔑 Token de partage")
-#         requester_email = st.text_input("📧 Votre email")
-#         submitted = st.form_submit_button("🔐 Login via Relay", use_container_width=True)
-
-#     if submitted and token_input and requester_email:
-#         with st.spinner("Relay login..."):
-#             result = api_post("/sharing/relay-login", {
-#                 "token": token_input,
-#                 "requester_email": requester_email,
-#             })
-
-#         if "cookies" in result:
-#             st.success("✅ Relay login OK. Cookies de session récupérés.")
-#             st.write("URL après login:", result.get("relay", {}).get("current_url"))
-#             st.write("Titre:", result.get("relay", {}).get("title"))
-#             st.json(result.get("cookies", []))
-#             st.warning("""
-#             Pour utiliser ces cookies dans un navigateur normal, il faut une extension ou un script (selon navigateur).
-#             Streamlit ne peut pas automatiquement injecter ces cookies dans ton navigateur.
-#             """)
-
-#         elif "localStorage" in result and result["localStorage"]:
-#             st.write("LocalStorage (peut contenir des tokens) :", result["localStorage"])
-#         else:
-#             st.error(f"❌ Relay login échoué: {result.get('detail', result)}")
-
-
-
-
-
-
-
-# def page_access_share():
-#     st.title("📩 Access a Shared Credential")
-#     st.markdown("""
-#     > Enter the received share token. The secret will be transmitted encrypted
-#     > and decrypted **only in your browser**.
-#     """)
-
-#     with st.form("access_form"):
-#         token_input = st.text_input("🔑 Share token", help="Token received from the owner")
-#         requester_email = st.text_input("📧 Your email")
-#         submitted = st.form_submit_button("🔓 Access", use_container_width=True)
-
-#     if submitted and token_input and requester_email:
-#         with st.spinner("Zero‑Trust verification..."):
-#             result = api_post("/sharing/access", {
-#                 "token": token_input,
-#                 "requester_email": requester_email,
-#             })
-#             st.write("Réponse API :", result)   # Ligne temporaire à supprimer ensuite
-
-#         if "encrypted_payload" in result:
-#             try:
-#                 decrypted_secret = decrypt_from_share(result["encrypted_payload"], result["decryption_key"])
-#                 st.success(f"✅ Access granted — Credential: **{result['credential_name']}**")
-#                 st.markdown(f"""
-#                 <div class="success-box">
-#                 <strong>Service:</strong> {result.get('service_url', '—')}<br>
-#                 <strong>Username:</strong> {result.get('username', '—')}<br>
-#                 <strong>🔓 Secret:</strong> <code>{decrypted_secret}</code>
-#                 </div>
-#                 """, unsafe_allow_html=True)
-#                 if result.get("permission") == "read_once":
-#                     st.warning("⚠️ One‑time use token — invalidated after this access")
-#             except Exception as e:
-#                 st.error(f"❌ Local decryption failed: {e}")
-#         else:
-#             st.error(f"❌ Access denied: {result.get('detail', result)}")
-
-
-# def page_audit():
-#     st.title("📋 Audit Trail")
-#     token = st.session_state.jwt_token
-#     if not token:
-#         st.error("Not logged in")
-#         return
-
-#     shares = api_get("/sharing/my-shares", token=token)
-#     if not isinstance(shares, list):
-#         st.error("API error")
-#         return
-#     if not shares:
-#         st.info("No active shares.")
-#         return
-
-#     for s in shares:
-#         status = "✅ Active" if not s.get("is_expired") else "⏰ Expired"
-#         with st.expander(f"{status} | {s['credential_name']} → {s['recipient_email']}"):
-#             col1, col2 = st.columns(2)
-#             with col1:
-#                 st.write(f"**Permission:** {s['permission']}")
-#                 st.write(f"**Uses:** {s['use_count']}/{s['max_uses']}")
-#                 st.write(f"**Expires:** {time.strftime('%Y-%m-%d %H:%M', time.localtime(s['expires_at']))}")
-#             with col2:
-#                 if st.button("📋 View detailed audit", key=f"audit_{s['share_id']}"):
-#                     audit = api_get(f"/sharing/audit/{s['share_id']}", token=token)
-#                     st.json(audit)
-#                 if st.button("🚫 Revoke", key=f"rev_{s['share_id']}"):
-#                     res = requests.delete(
-#                         f"{API_URL}/sharing/revoke/{s['share_id']}",
-#                         headers={"Authorization": f"Bearer {token}"}
-#                     ).json()
-#                     st.success(res.get("message", "Revoked"))
-#                     st.rerun()
-
-
-# def page_about_zkp():
-#     st.title("ℹ️ Zero-Knowledge Proof — Explanations")
-#     st.markdown("""
-#     ## What is a Zero‑Knowledge Proof (ZKP)?
-
-#     A **Zero‑Knowledge Proof** allows one party (the **prover**) to convince
-#     another party (the **verifier**) that they know a secret, **without revealing that secret**.
-
-#     ---
-
-#     ## Schnorr Protocol (implemented here)
-
-#     | Step | Actor | Action |
-#     |------|-------|--------|
-#     | Setup | Alice | Chooses `x` (secret), computes `Y = g^x mod p` (public) |
-#     | 1. Commitment | Alice | Chooses random `r`, sends `Y_r = g^r mod p` |
-#     | 2. Challenge | Server | Computes `c = H(Y ‖ Y_r ‖ email)` |
-#     | 3. Response | Alice | Computes `s = r - c·x mod q`, sends `s` |
-#     | 4. Verify | Server | Checks `g^s · Y^c ≡ Y_r (mod p)` |
-
-#     ### Guaranteed properties:
-#     - **Completeness**: An honest prover always convinces the verifier
-#     - **Soundness**: A dishonest prover cannot cheat the verifier
-#     - **Zero‑Knowledge**: The verifier learns nothing about `x`
-
-#     ---
-
-#     ## Zero‑Trust Architecture
-                
-#  ## Zero‑Trust Architecture
-# Client Browser Server Database
-# ───────────── ────────── ───────────────
-# password (local) → Y = g^x mod p → Y (public key)
-# AES encrypt(secret) → encrypted blob → encrypted blob
-# r (local random) → challenge c → challenge (TTL 5min)
-# s = r-cx mod q → verify g^s·Y^c=Y_r → nothing (token invalidated)
-
-                
-
-# ### Least‑privilege principle:
-# - Each credential has its own keys
-# - Share tokens are one‑time use
-# - Full audit of every access
-# - Instant revocation
-
-# ---
-
-# ## Technologies used
-
-# | Component | Technology |
-# |-----------|------------|
-# | ZKP | Schnorr Protocol (2048‑bit Schnorr group) |
-# | Encryption | AES-256-GCM (AEAD) |
-# | Key derivation | PBKDF2-HMAC-SHA256 (310,000 iterations) |
-# | Auth tokens | JWT HS256 |
-# | Backend | FastAPI + SQLAlchemy |
-# | Frontend | Streamlit |
-# | Architecture | Zero‑Trust |
-# """)
-
-
-# if __name__ == "__main__":
-#     main()
-
-
-
-
-
-
 
 
 

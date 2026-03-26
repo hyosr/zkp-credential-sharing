@@ -23,9 +23,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.schemas.sharing import RelayLoginRequest
-from backend.crypto.encryption import ShareEncryptor
 from backend.relay.playwright_relay import login_and_get_cookies
-from backend.crypto.token_manager import validate_and_consume_token
 
 from backend.crypto.encryption import ShareEncryptor
 from backend.crypto.token_manager import (
@@ -42,9 +40,6 @@ from pydantic import BaseModel
 
 
 from backend.models.database import get_db
-from backend.crypto.encryption import ShareEncryptor
-from frontend.dashboard import api_post, decrypt_from_share
-
 
 router = APIRouter(prefix="/sharing", tags=["Secure Sharing"])
 
@@ -322,6 +317,73 @@ def create_share(
 
 
 
+# @router.post("/access")
+# def access_share(
+#     req: AccessShareRequest,
+#     request: Request,
+#     current_user: User = Depends(get_current_user),  # ✅ obligatoire
+#     db: Session = Depends(get_db),
+# ):
+#     """
+#     Accès à un credential partagé via token one-time.
+#     Zero-Trust : le demandeur DOIT être connecté, et son email doit matcher recipient_email.
+#     Retourne le blob chiffré (le destinataire le déchiffre avec la clé stockée).
+#     """
+#     # ✅ Validation Zero-Trust: on utilise l'email du user connecté (pas de champ fourni par le client)
+#     requester_email = current_user.email
+
+#     share_info = validate_and_consume_token(req.token, requester_email)
+#     if not share_info:
+#         raise HTTPException(
+#             status_code=403,
+#             detail="Token invalide, expiré, ou email non autorisé"
+#         )
+
+#     # Récupère le partage en base
+#     token_hash = hashlib.sha256(req.token.encode()).hexdigest()
+#     shared = db.query(SharedAccess).filter(
+#         SharedAccess.token_hash == token_hash,
+#         SharedAccess.is_revoked == False,
+#     ).first()
+#     if not shared:
+#         raise HTTPException(status_code=404, detail="Partage non trouvé")
+#     if time.time() > shared.expires_at:
+#         raise HTTPException(status_code=403, detail="Partage expiré")
+
+#     # ✅ Double-check DB: email connecté doit matcher recipient_email (au cas où token_manager est reset)
+#     if (shared.recipient_email or "").lower().strip() != (requester_email or "").lower().strip():
+#         raise HTTPException(status_code=403, detail="Email non autorisé pour ce partage")
+
+#     # Audit trail
+#     shared.use_count += 1
+#     shared.used_at = time.time()
+#     ip = request.client.host if request.client else "unknown"
+#     ua = request.headers.get("user-agent", "unknown")
+#     shared.add_access_log_entry(ip, ua)
+
+#     # Si one-time, invalide après usage
+#     if shared.permission == "read_once" and shared.use_count >= shared.max_uses:
+#         shared.is_revoked = True
+#         shared.revoked_at = time.time()
+
+#     db.commit()
+
+#     # Récupère infos du credential (sans le secret original)
+#     cred = db.query(Credential).filter(Credential.id == shared.credential_id).first()
+
+#     return {
+#         "credential_name": cred.name if cred else "Inconnu",
+#         "service_url": cred.service_url if cred else None,
+#         "username": cred.username if cred else None,
+#         "encrypted_payload": shared.encrypted_payload,
+#         "decryption_key": shared.share_key,
+#         "permission": shared.permission,
+#         "message": "Accès autorisé — déchiffrez localement avec le token fourni",
+#     }
+
+
+
+
 @router.post("/access")
 def access_share(
     req: AccessShareRequest,
@@ -330,62 +392,66 @@ def access_share(
     db: Session = Depends(get_db),
 ):
     """
-    Accès à un credential partagé via token one-time.
-    Zero-Trust : le demandeur DOIT être connecté, et son email doit matcher recipient_email.
-    Retourne le blob chiffré (le destinataire le déchiffre avec la clé stockée).
+    ✅ Secure Access (NO SECRET REVEAL)
+    - User must be authenticated (ZKP JWT) and email must match recipient_email
+    - Token is validated/consumed (zero-trust)
+    - We DO NOT return encrypted_payload nor decryption_key anymore
+    - Recipient must use /sharing/relay-login to log in without ever seeing the password
     """
-    # ✅ Validation Zero-Trust: on utilise l'email du user connecté (pas de champ fourni par le client)
-    requester_email = current_user.email
+    requester_email = (current_user.email or "").strip().lower()
+    if not requester_email:
+        raise HTTPException(status_code=401, detail="Authenticated user email missing")
 
+    # Validate token (zero-trust) against authenticated email
     share_info = validate_and_consume_token(req.token, requester_email)
     if not share_info:
-        raise HTTPException(
-            status_code=403,
-            detail="Token invalide, expiré, ou email non autorisé"
-        )
+        raise HTTPException(status_code=403, detail="Token invalide, expiré, ou email non autorisé")
 
-    # Récupère le partage en base
+    # Load share from DB
     token_hash = hashlib.sha256(req.token.encode()).hexdigest()
     shared = db.query(SharedAccess).filter(
         SharedAccess.token_hash == token_hash,
         SharedAccess.is_revoked == False,
     ).first()
+
     if not shared:
         raise HTTPException(status_code=404, detail="Partage non trouvé")
+
     if time.time() > shared.expires_at:
         raise HTTPException(status_code=403, detail="Partage expiré")
 
-    # ✅ Double-check DB: email connecté doit matcher recipient_email (au cas où token_manager est reset)
-    if (shared.recipient_email or "").lower().strip() != (requester_email or "").lower().strip():
+    # DB-level email check
+    if (shared.recipient_email or "").strip().lower() != requester_email:
         raise HTTPException(status_code=403, detail="Email non autorisé pour ce partage")
 
-    # Audit trail
+    # Audit trail (access attempt recorded)
     shared.use_count += 1
     shared.used_at = time.time()
     ip = request.client.host if request.client else "unknown"
     ua = request.headers.get("user-agent", "unknown")
     shared.add_access_log_entry(ip, ua)
 
-    # Si one-time, invalide après usage
+    # If one-time, revoke after max uses
     if shared.permission == "read_once" and shared.use_count >= shared.max_uses:
         shared.is_revoked = True
         shared.revoked_at = time.time()
 
     db.commit()
 
-    # Récupère infos du credential (sans le secret original)
+    # Credential metadata only (no secret material)
     cred = db.query(Credential).filter(Credential.id == shared.credential_id).first()
 
     return {
         "credential_name": cred.name if cred else "Inconnu",
         "service_url": cred.service_url if cred else None,
         "username": cred.username if cred else None,
-        "encrypted_payload": shared.encrypted_payload,
-        "decryption_key": shared.share_key,
         "permission": shared.permission,
-        "message": "Accès autorisé — déchiffrez localement avec le token fourni",
+        "expires_at": shared.expires_at,
+        "use_count": shared.use_count,
+        "max_uses": shared.max_uses,
+        "message": "Access verified. Use /sharing/relay-login to login without revealing the password.",
+        "next_action": "relay_login",
     }
-
 
 
 
