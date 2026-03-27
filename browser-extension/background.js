@@ -45,19 +45,7 @@ async function injectCookies(serviceUrl, cookies) {
   }
 }
 
-async function doHandoff(handoffUrl) {
-  const data = await fetchJson(handoffUrl);
-  const serviceUrl = data.service_url;
-  const currentUrl = data.current_url || serviceUrl;
 
-  const cookies = data.cookies || [];
-
-  if (!serviceUrl) throw new Error("handoff response missing service_url");
-
-  await injectCookies(serviceUrl, cookies);
-  await chrome.tabs.create({ url: serviceUrl });
-  await chrome.tabs.create({ url: currentUrl });
-}
 
 chrome.action.onClicked.addListener(async () => {
   const { handoffUrl } = await chrome.storage.local.get(["handoffUrl"]);
@@ -72,3 +60,48 @@ chrome.action.onClicked.addListener(async () => {
     console.error("Handoff failed:", e);
   }
 });
+
+
+
+async function doHandoff(handoffUrl) {
+  const data = await fetchJson(handoffUrl);
+  const serviceUrl = data.service_url;
+  const cookies = data.cookies || [];
+  const localStorageData = data.local_storage;
+
+  if (!serviceUrl) throw new Error("handoff response missing service_url");
+
+  // Inject cookies
+  for (const c of cookies) {
+    const details = {
+      url: buildCookieSetUrl(c, serviceUrl),
+      name: c.name,
+      value: c.value,
+      path: c.path || "/",
+      httpOnly: !!c.httpOnly,
+      secure: true,
+      sameSite: normalizeSameSite(c.sameSite)
+    };
+    if (c.domain) details.domain = c.domain;
+    if (typeof c.expires === "number" && c.expires > 0) {
+      details.expirationDate = c.expires;
+    }
+    await chrome.cookies.set(details);
+  }
+
+  // Open tab and inject localStorage
+  chrome.tabs.create({ url: serviceUrl }, (tab) => {
+    if (localStorageData) {
+      chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (data) => {
+          const parsed = JSON.parse(data);
+          for (const [key, value] of Object.entries(parsed)) {
+            window.localStorage.setItem(key, value);
+          }
+        },
+        args: [localStorageData]
+      });
+    }
+  });
+}

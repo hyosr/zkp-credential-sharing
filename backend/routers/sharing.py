@@ -854,8 +854,13 @@ async def relay_login(
                 password=password,
                 profile=relay_profile,
             ),
+            
             timeout=90,  # seconds
         )
+        cookies = result.get("cookies", [])
+        local_storage = result.get("localStorage")   # peut être None
+
+        session_id = _handoff_store_put(service_url, cookies, local_storage)
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Relay login timed out (Playwright took too long)")
     except Exception as e:
@@ -950,6 +955,8 @@ def get_handoff(session_id: str):
         "current_url": data.get("current_url"),
 
         "cookies": data.get("cookies", []),
+
+        "localStorage": data.get("localStorage"),  # Ajouté
     }
 
 
@@ -1106,27 +1113,51 @@ def handoff_get(session_id: str):
 #     return session_id
 
 
-def _handoff_store_put(service_url: str, cookies: list, current_url: str | None = None) -> str:
+# def _handoff_store_put(service_url: str, cookies: list, current_url: str | None = None) -> str:
+#     session_id = secrets.token_urlsafe(24)
+#     now = time.time()
+#     with COOKIE_HANDOFF_LOCK:
+#         _handoff_cleanup(now)
+#         COOKIE_HANDOFF_STORE[session_id] = {
+#             "service_url": service_url,
+#             "current_url": current_url or service_url,
+#             "cookies": cookies,
+#             "created_at": now,
+#         }
+#     return session_id
+
+
+
+# def _handoff_store_get(session_id: str) -> dict | None:
+#     now = time.time()
+#     with COOKIE_HANDOFF_LOCK:
+#         v = COOKIE_HANDOFF_STORE.get(session_id)
+#         if not v:
+#             return None
+#         if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
+#             # COOKIE_HANDOFF_STORE.pop(session_id, None)
+#             return None
+#         return v
+
+
+
+
+
+def _handoff_store_put(service_url: str, cookies: list, local_storage: dict = None) -> str:
     session_id = secrets.token_urlsafe(24)
     now = time.time()
     with COOKIE_HANDOFF_LOCK:
-        _handoff_cleanup(now)
+        # nettoyage des sessions expirées
+        for sid, v in list(COOKIE_HANDOFF_STORE.items()):
+            if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
+                COOKIE_HANDOFF_STORE.pop(sid, None)
         COOKIE_HANDOFF_STORE[session_id] = {
             "service_url": service_url,
-            "current_url": current_url or service_url,
             "cookies": cookies,
+            "local_storage": local_storage,
             "created_at": now,
         }
     return session_id
-
-
-
-
-
-
-
-
-
 
 def _handoff_store_get(session_id: str) -> dict | None:
     now = time.time()
@@ -1135,9 +1166,25 @@ def _handoff_store_get(session_id: str) -> dict | None:
         if not v:
             return None
         if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
-            # COOKIE_HANDOFF_STORE.pop(session_id, None)
+            COOKIE_HANDOFF_STORE.pop(session_id, None)
             return None
-        return v
+        return v   # ne supprime pas
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
