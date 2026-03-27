@@ -15,6 +15,89 @@ def _domain_from_url(url: str) -> str:
         return d.split(":")[0].lower().strip()
     except Exception:
         return ""
+    
+
+
+async def _dump_web_storage(page) -> tuple[str | None, str | None]:
+    """
+    Returns (localStorageJSON, sessionStorageJSON) for the current origin.
+    Uses page.evaluate in the page context.
+    """
+    local_storage = await page.evaluate(
+        """() => {
+          try {
+            const o = {};
+            for (let i = 0; i < window.localStorage.length; i++) {
+              const k = window.localStorage.key(i);
+              o[k] = window.localStorage.getItem(k);
+            }
+            return JSON.stringify(o);
+          } catch (e) {
+            return null;
+          }
+        }"""
+    )
+    session_storage = await page.evaluate(
+        """() => {
+          try {
+            const o = {};
+            for (let i = 0; i < window.sessionStorage.length; i++) {
+              const k = window.sessionStorage.key(i);
+              o[k] = window.sessionStorage.getItem(k);
+            }
+            return JSON.stringify(o);
+          } catch (e) {
+            return null;
+          }
+        }"""
+    )
+    if local_storage == "{}":
+        local_storage = None
+    if session_storage == "{}":
+        session_storage = None
+    return local_storage, session_storage
+
+
+
+async def _dump_storage(page) -> tuple[str | None, str | None]:
+    local_storage = await page.evaluate(
+        """() => {
+          try {
+            const o = {};
+            for (let i = 0; i < window.localStorage.length; i++) {
+              const k = window.localStorage.key(i);
+              o[k] = window.localStorage.getItem(k);
+            }
+            const s = JSON.stringify(o);
+            return s === "{}" ? null : s;
+          } catch (e) { return null; }
+        }"""
+    )
+    session_storage = await page.evaluate(
+        """() => {
+          try {
+            const o = {};
+            for (let i = 0; i < window.sessionStorage.length; i++) {
+              const k = window.sessionStorage.key(i);
+              o[k] = window.sessionStorage.getItem(k);
+            }
+            const s = JSON.stringify(o);
+            return s === "{}" ? null : s;
+          } catch (e) { return null; }
+        }"""
+    )
+    return local_storage, session_storage
+
+
+
+
+
+
+
+
+
+
+
 
 
 async def login_and_get_cookies(
@@ -93,6 +176,9 @@ async def login_and_get_cookies(
             page = await context.new_page()
             page.set_default_timeout(DEFAULT_TIMEOUT_MS)
 
+
+            if service_url.startswith("http://"):
+                service_url = "https://" + service_url[len("http://"):]
             await page.goto(service_url, wait_until=goto_wait_until)
 
             # Optional click to open login modal/page
@@ -182,19 +268,121 @@ async def login_and_get_cookies(
                 except PlaywrightTimeoutError:
                     pass
 
+
+            # After submitting, force-load the home page so the SPA initializes with cookies
+            try:
+                await page.goto("https://recolyse.com/", wait_until="domcontentloaded")
+                # give the app time to run JS and potentially populate storage / render logged-in UI
+                await page.wait_for_timeout(2500)
+            except Exception:
+                pass
+
+
+            # ✅ IMPORTANT: load home so SPA writes persist:root/token/user into localStorage
+            try:
+                await page.goto("https://recolyse.com/", wait_until="domcontentloaded")
+                await page.wait_for_timeout(3000)
+            except Exception:
+                pass
+
             cookies = await context.cookies()
 
-            local_storage = await page.evaluate("() => JSON.stringify(window.localStorage)")
+
+
+            # If site uses localStorage token (Recolyse does), seed it from cookie token
+            try:
+                jwt_token = None
+                for c in cookies:
+                    if c.get("name") == "token" and c.get("value"):
+                        jwt_token = c["value"]
+                        break
+
+                if jwt_token:
+        # Make sure we are on correct origin
+                    await page.goto("https://recolyse.com/", wait_until="domcontentloaded")
+                    await page.wait_for_timeout(1000)
+
+                    await page.evaluate(
+                        """(t) => {
+                        try {
+                            window.localStorage.setItem("token", t);
+                        } catch (e) {}
+                    }""",
+                    jwt_token,
+        )
+
+        # Let the SPA read storage and settle
+                    await page.reload(wait_until="domcontentloaded")
+                    await page.wait_for_timeout(1500)
+            except Exception:
+                pass
+
+            local_storage, session_storage = await _dump_storage(page)
 
             return {
                 "cookies": cookies,
-                "localStorage": local_storage if local_storage != "{}" else None,
-                "current_url": page.url if page else service_url,
-                "title": (await page.title()) if page else "",
+                "localStorage": local_storage,
+                "sessionStorage": session_storage,
+                "current_url": page.url,
+                "title": await page.title(),
                 "used_selectors": used,
-                "domain": _domain_from_url(service_url),
-                "login_detected": login_detected,
-            }
+            }# ✅ IMPORTANT: load home so SPA writes persist:root/token/user into localStorage
+
+
+
+
+            
+
+            # cookies = await context.cookies()
+
+            # local_storage = await page.evaluate("() => JSON.stringify(window.localStorage)")
+
+            # return {
+            #     "cookies": cookies,
+            #     "localStorage": local_storage if local_storage != "{}" else None,
+            #     "current_url": page.url if page else service_url,
+            #     "title": (await page.title()) if page else "",
+            #     "used_selectors": used,
+            #     "domain": _domain_from_url(service_url),
+            #     "login_detected": login_detected,
+            # }
+
+
+            # session_storage = await page.evaluate("() => JSON.stringify(window.sessionStorage)")
+
+
+#             cookies = await context.cookies()
+
+# # ✅ ensure we are on the correct origin before dumping storage
+# # Some sites set storage only after redirect; visit homepage once after login.
+#             try:
+#                 await page.goto("https://recolyse.com/", wait_until="domcontentloaded")
+#             except Exception:
+#                 pass
+
+#             local_storage, session_storage = await _dump_web_storage(page)
+
+#             if "/login" in page.url:
+#                 raise Exception("Login did not stick (still on /login after submit).")
+
+
+
+
+
+
+#             return {
+#                 "cookies": cookies,
+#                 "localStorage": local_storage,
+#                 "sessionStorage": session_storage,
+#                 "current_url": page.url,
+#                 "title": await page.title(),
+#                 "used_selectors": used,
+#                 "login_detected": login_detected,
+#             }
+
+
+
+
 
     except Exception as e:
         # NEVER reference page/context/browser if they were not created

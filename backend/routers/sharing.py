@@ -67,17 +67,108 @@ def _handoff_cleanup(now: float):
             COOKIE_HANDOFF_STORE.pop(sid, None)
 
 
-def _handoff_store_put(service_url: str, cookies: list) -> str:
+# def _handoff_store_put(service_url: str, cookies: list) -> str:
+#     session_id = secrets.token_urlsafe(24)
+#     now = time.time()
+#     with COOKIE_HANDOFF_LOCK:
+#         _handoff_cleanup(now)
+#         COOKIE_HANDOFF_STORE[session_id] = {
+#             "service_url": service_url,
+#             "cookies": cookies,
+#             "created_at": now,
+#         }
+#     return session_id
+
+
+
+# def _handoff_store_put(
+#     service_url: str,
+#     cookies: list,
+#     *,
+#     current_url: str | None = None,
+#     local_storage: str | None = None,
+#     session_storage: str | None = None,
+# ) -> str:
+#     session_id = secrets.token_urlsafe(24)
+#     now = time.time()
+#     with COOKIE_HANDOFF_LOCK:
+#         _handoff_cleanup(now)
+#         COOKIE_HANDOFF_STORE[session_id] = {
+#             "service_url": service_url,
+#             "current_url": current_url or service_url,
+#             "cookies": cookies,
+#             "localStorage": local_storage,       # ✅ keep camelCase
+#             "sessionStorage": session_storage,   # ✅ keep camelCase
+#             "created_at": now,
+#         }
+#     return session_id
+
+
+
+
+def _handoff_store_put(
+    service_url: str,
+    cookies: list,
+    current_url: str | None = None,
+    local_storage: str | None = None,
+    session_storage: str | None = None,
+) -> str:
     session_id = secrets.token_urlsafe(24)
     now = time.time()
     with COOKIE_HANDOFF_LOCK:
-        _handoff_cleanup(now)
+        for sid, v in list(COOKIE_HANDOFF_STORE.items()):
+            if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
+                COOKIE_HANDOFF_STORE.pop(sid, None)
+
         COOKIE_HANDOFF_STORE[session_id] = {
             "service_url": service_url,
+            "current_url": current_url or service_url,
             "cookies": cookies,
+            "localStorage": local_storage,       # ✅ camelCase
+            "sessionStorage": session_storage,   # ✅ camelCase
             "created_at": now,
         }
     return session_id
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def _handoff_store_get(session_id: str) -> dict | None:
+    now = time.time()
+    with COOKIE_HANDOFF_LOCK:
+        v = COOKIE_HANDOFF_STORE.get(session_id)
+        if not v:
+            return None
+        if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
+            # COOKIE_HANDOFF_STORE.pop(session_id, None)
+            return None
+        return v   # ne supprime pas
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _handoff_store_consume(session_id: str) -> dict | None:
@@ -89,7 +180,8 @@ def _handoff_store_consume(session_id: str) -> dict | None:
         if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
             COOKIE_HANDOFF_STORE.pop(session_id, None)
             return None
-        return COOKIE_HANDOFF_STORE.pop(session_id, None)
+        # return COOKIE_HANDOFF_STORE.pop(session_id, None)
+        return v   # ne supprime pas 
 
 
 
@@ -113,20 +205,58 @@ def _handoff_store_consume(session_id: str) -> dict | None:
 
 
 
+# RELAY_PROFILES = {
+#     "recolyse.com": {
+#         "username_selector": "#outlined-basic",  # ID unique pour l'email
+#         "password_selector": "input[type='password'].MuiInputBase-input",  # classe + type
+#         "submit_selector": "button.style_primary-btn__aHK9J",
+#         "post_login_wait": 2000,  # attendre 2s après soumission
+
+#          #✅ NEW: selector that exists only when user is logged in
+#         # TODO: adjust to a real element in the logged-in UI if needed
+#         "post_login_selector": "text=Logout, text=Se déconnecter, [aria-label*='account'], [data-testid*='avatar']",
+#         "post_login_timeout_ms": 15000,
+
+#     },
+#     # autres domaines...
+# }
+
+
+
+
+
+
+
 RELAY_PROFILES = {
     "recolyse.com": {
-        "username_selector": "#outlined-basic",  # ID unique pour l'email
-        "password_selector": "input[type='password'].MuiInputBase-input",  # classe + type
-        "submit_selector": "button.style_primary-btn__aHK9J",
-        "post_login_wait": 2000,  # attendre 2s après soumission
-
-         #✅ NEW: selector that exists only when user is logged in
-        # TODO: adjust to a real element in the logged-in UI if needed
-        "post_login_selector": "text=Logout, text=Se déconnecter, [aria-label*='account'], [data-testid*='avatar']",
+        "username_selector": [
+            "#outlined-basic",
+            "input[type='email']",
+            "input[name='email']",
+            "input#email",
+            "input[autocomplete='email']",
+            "input[type='text']",
+        ],
+        "password_selector": [
+            "input[type='password'].MuiInputBase-input",
+            "input[type='password']",
+            "input[name='password']",
+            "input#password",
+            "input[autocomplete='current-password']",
+        ],
+        "submit_selector": [
+            "button.style_primary-btn__aHK9J",
+            "button[type='submit']",
+            "input[type='submit']",
+            "button:has-text('Se connecter')",
+            "button:has-text('Connexion')",
+            "button:has-text('Login')",
+            "button:has-text('Sign in')",
+        ],
+        "post_login_wait": 2000,
         "post_login_timeout_ms": 15000,
-
-    },
-    # autres domaines...
+        "post_login_selector": "text=Logout, text=Se déconnecter, [aria-label*='account'], [data-testid*='avatar']",
+    }
 }
 
 
@@ -857,10 +987,31 @@ async def relay_login(
             
             timeout=90,  # seconds
         )
-        cookies = result.get("cookies", [])
-        local_storage = result.get("localStorage")   # peut être None
+        # cookies = result.get("cookies", [])
+        # local_storage = result.get("localStorage")   # peut être None
 
-        session_id = _handoff_store_put(service_url, cookies, local_storage)
+        # session_id = _handoff_store_put(service_url, cookies, local_storage)
+
+
+
+        cookies = result.get("cookies", [])
+        local_storage = result.get("localStorage")
+        session_storage = result.get("sessionStorage")
+
+        session_id = _handoff_store_put(
+            service_url=service_url,
+            cookies=cookies,
+            current_url=result.get("current_url"),
+            local_storage=result.get("local_storage"),  # peut être None
+            session_storage=result.get("sessionStorage"),
+        )
+
+
+
+
+
+
+
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Relay login timed out (Playwright took too long)")
     except Exception as e:
@@ -939,11 +1090,33 @@ async def relay_login(
 
 
 
+# @router.get("/handoff/{session_id}")
+# def get_handoff(session_id: str):
+#     """
+#     Used by the browser extension to fetch cookies and target URL.
+#     Session is short-lived and ONE-TIME (consumed).
+#     """
+#     data = _handoff_store_get(session_id)
+#     if not data:
+#         raise HTTPException(status_code=404, detail="Handoff session not found or expired")
+
+#     return {
+#         "service_url": data.get("service_url"),
+
+#         "current_url": data.get("current_url"),
+
+#         "cookies": data.get("cookies", []),
+
+#         "localStorage": data.get("localStorage"),  # Ajouté
+#     }
+
+
 @router.get("/handoff/{session_id}")
-def get_handoff(session_id: str):
+def handoff_get(session_id: str):
     """
-    Used by the browser extension to fetch cookies and target URL.
-    Session is short-lived and ONE-TIME (consumed).
+    One-time handoff endpoint for the browser extension.
+    Returns cookies + localStorage + sessionStorage + current_url.
+    Consumed on first read.
     """
     data = _handoff_store_get(session_id)
     if not data:
@@ -951,13 +1124,15 @@ def get_handoff(session_id: str):
 
     return {
         "service_url": data.get("service_url"),
-
         "current_url": data.get("current_url"),
-
         "cookies": data.get("cookies", []),
-
-        "localStorage": data.get("localStorage"),  # Ajouté
+        "localStorage": data.get("localStorage"),
+        "sessionStorage": data.get("sessionStorage"),
+        "expires_in": COOKIE_HANDOFF_TTL_SECONDS,
     }
+
+
+
 
 
 
@@ -1071,23 +1246,21 @@ def finalize_share(
 
 
 
-@router.get("/handoff/{session_id}")
-def handoff_get(session_id: str):
-    """
-    One-time cookie handoff endpoint for a browser extension.
-    - short-lived (TTL)
-    - one-time consume
-    """
-    data = _handoff_store_consume(session_id)
-    if not data:
-        raise HTTPException(status_code=404, detail="Handoff session not found or expired")
+# @router.get("/handoff/{session_id}")
+# def handoff_get(session_id: str):
+#     """
+#     One-time cookie handoff endpoint for a browser extension.
+#     - short-lived (TTL)
+#     - one-time consume
+#     """
+#     data = _handoff_store_consume(session_id)
+#     if not data:
+#         raise HTTPException(status_code=404, detail="Handoff session not found or expired")
 
-    return {
-        "service_url": data.get("service_url"),
-        "cookies": data.get("cookies", []),
-    }
-
-
+#     return {
+#         "service_url": data.get("service_url"),
+#         "cookies": data.get("cookies", []),
+#     }
 
 
 
@@ -1096,105 +1269,53 @@ def handoff_get(session_id: str):
 
 
 
-# def _handoff_store_put(service_url: str, cookies: list) -> str:
+
+
+
+
+# def _handoff_store_put(service_url: str, cookies: list, local_storage: dict = None) -> str:
 #     session_id = secrets.token_urlsafe(24)
 #     now = time.time()
 #     with COOKIE_HANDOFF_LOCK:
-#         # cleanup
+#         # nettoyage des sessions expirées
 #         for sid, v in list(COOKIE_HANDOFF_STORE.items()):
 #             if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
 #                 COOKIE_HANDOFF_STORE.pop(sid, None)
-
 #         COOKIE_HANDOFF_STORE[session_id] = {
 #             "service_url": service_url,
 #             "cookies": cookies,
-#             "created_at": now,
-#         }
-#     return session_id
-
-
-# def _handoff_store_put(service_url: str, cookies: list, current_url: str | None = None) -> str:
-#     session_id = secrets.token_urlsafe(24)
-#     now = time.time()
-#     with COOKIE_HANDOFF_LOCK:
-#         _handoff_cleanup(now)
-#         COOKIE_HANDOFF_STORE[session_id] = {
-#             "service_url": service_url,
-#             "current_url": current_url or service_url,
-#             "cookies": cookies,
+#             "local_storage": local_storage,
 #             "created_at": now,
 #         }
 #     return session_id
 
 
 
-# def _handoff_store_get(session_id: str) -> dict | None:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# def _handoff_store_consume(session_id: str) -> dict | None:
 #     now = time.time()
 #     with COOKIE_HANDOFF_LOCK:
 #         v = COOKIE_HANDOFF_STORE.get(session_id)
 #         if not v:
 #             return None
 #         if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
-#             # COOKIE_HANDOFF_STORE.pop(session_id, None)
+#             COOKIE_HANDOFF_STORE.pop(session_id, None)
 #             return None
-#         return v
-
-
-
-
-
-def _handoff_store_put(service_url: str, cookies: list, local_storage: dict = None) -> str:
-    session_id = secrets.token_urlsafe(24)
-    now = time.time()
-    with COOKIE_HANDOFF_LOCK:
-        # nettoyage des sessions expirées
-        for sid, v in list(COOKIE_HANDOFF_STORE.items()):
-            if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
-                COOKIE_HANDOFF_STORE.pop(sid, None)
-        COOKIE_HANDOFF_STORE[session_id] = {
-            "service_url": service_url,
-            "cookies": cookies,
-            "local_storage": local_storage,
-            "created_at": now,
-        }
-    return session_id
-
-def _handoff_store_get(session_id: str) -> dict | None:
-    now = time.time()
-    with COOKIE_HANDOFF_LOCK:
-        v = COOKIE_HANDOFF_STORE.get(session_id)
-        if not v:
-            return None
-        if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
-            COOKIE_HANDOFF_STORE.pop(session_id, None)
-            return None
-        return v   # ne supprime pas
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def _handoff_store_consume(session_id: str) -> dict | None:
-    now = time.time()
-    with COOKIE_HANDOFF_LOCK:
-        v = COOKIE_HANDOFF_STORE.get(session_id)
-        if not v:
-            return None
-        if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
-            COOKIE_HANDOFF_STORE.pop(session_id, None)
-            return None
-        return COOKIE_HANDOFF_STORE.pop(session_id, None)
+#         return COOKIE_HANDOFF_STORE.pop(session_id, None)
