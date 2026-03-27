@@ -48,12 +48,15 @@ async function injectCookies(serviceUrl, cookies) {
 async function doHandoff(handoffUrl) {
   const data = await fetchJson(handoffUrl);
   const serviceUrl = data.service_url;
+  const currentUrl = data.current_url || serviceUrl;
+
   const cookies = data.cookies || [];
 
   if (!serviceUrl) throw new Error("handoff response missing service_url");
 
   await injectCookies(serviceUrl, cookies);
   await chrome.tabs.create({ url: serviceUrl });
+  await chrome.tabs.create({ url: currentUrl });
 }
 
 chrome.action.onClicked.addListener(async () => {

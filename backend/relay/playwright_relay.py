@@ -308,7 +308,7 @@ async def login_and_get_cookies(
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(headless=False)
             context = await browser.new_context()
             page = await context.new_page()
             page.set_default_timeout(DEFAULT_TIMEOUT_MS)

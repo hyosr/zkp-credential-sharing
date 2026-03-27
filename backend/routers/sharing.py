@@ -49,7 +49,7 @@ from threading import Lock
 # Temporary in-memory store: session_id -> {"cookies": [...], "service_url": "...", "created_at": ...}
 COOKIE_HANDOFF_STORE: dict[str, dict] = {}
 COOKIE_HANDOFF_LOCK = Lock()
-COOKIE_HANDOFF_TTL_SECONDS = 120  # 2 minutes
+COOKIE_HANDOFF_TTL_SECONDS = 600  # 2 minutes
 
 
 
@@ -59,14 +59,6 @@ encryptor = ShareEncryptor()
 
 
 
-
-
-
-
-# ─── Cookie Handoff Store (in-memory) ──────────────────────────────────────────
-COOKIE_HANDOFF_STORE: dict[str, dict] = {}
-COOKIE_HANDOFF_LOCK = Lock()
-COOKIE_HANDOFF_TTL_SECONDS = 120  # 2 minutes
 
 
 def _handoff_cleanup(now: float):
@@ -948,7 +940,7 @@ def get_handoff(session_id: str):
     Used by the browser extension to fetch cookies and target URL.
     Session is short-lived and ONE-TIME (consumed).
     """
-    data = _handoff_store_consume(session_id)
+    data = _handoff_store_get(session_id)
     if not data:
         raise HTTPException(status_code=404, detail="Handoff session not found or expired")
 
@@ -1143,7 +1135,7 @@ def _handoff_store_get(session_id: str) -> dict | None:
         if not v:
             return None
         if now - v.get("created_at", now) > COOKIE_HANDOFF_TTL_SECONDS:
-            COOKIE_HANDOFF_STORE.pop(session_id, None)
+            # COOKIE_HANDOFF_STORE.pop(session_id, None)
             return None
         return v
 
