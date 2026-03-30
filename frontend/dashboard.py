@@ -175,6 +175,18 @@ def api_get(endpoint: str, token: str = None) -> dict:
 
 # ─── UI THEME (visual only) ───────────────────────────────────────────────────
 
+
+
+def make_extension_connect_url(handoff_url: str) -> str:
+    # This is a simple “bridge URL” your extension will listen to
+    # It can be any domain you own; for local demo we use your API
+    return f"{API_URL}/extension/connect?handoff={urllib.parse.quote(handoff_url, safe='')}"
+
+
+
+
+
+
 def _inject_theme():
     st.markdown(
         """
@@ -1066,6 +1078,20 @@ The extension will:
 2) inject them into the target domain,
 3) open the logged-in site.
 """)
+            st.markdown(
+    """
+<div class="zkp-card">
+  <div style="display:flex; gap:10px; flex-wrap:wrap;">
+    <div class="zkp-badge">1) Relay Login</div>
+    <div class="zkp-badge">2) Handoff Session</div>
+    <div class="zkp-badge">3) Extension Injection</div>
+    <div class="zkp-badge">4) Connected Profile</div>
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+            
         else:
             st.error(f"❌ Relay login failed: {result.get('detail', result)}")
 
@@ -1240,26 +1266,98 @@ Then you can use **Relay Login** to log into the target website.
 
 
 
+# def render_handoff_ui(service_url: str, session_id: str):
+#     st.success("✅ Relay login OK. Ready to inject cookies automatically (via extension).")
+#     st.write("Target service:", service_url)
+#     st.write("Handoff session id (expires quickly):", session_id)
+
+#     # This URL is what the extension will read from (backend endpoint)
+#     handoff_api_url = f"{API_URL}/sharing/handoff/{session_id}"
+
+#     st.markdown("### Step: click the button below (extension must be installed)")
+#     st.markdown(
+#         f"""
+# Open this in your browser (same browser where extension is installed):
+# - Handoff API URL (extension will fetch it): `{handoff_api_url}`
+# - Then extension will inject cookies into the target domain and open `{service_url}`
+#         """
+#     )
+
+#     # Just open target URL; extension will inject cookies before/after
+#     st.link_button("🚀 Open target service (extension will inject cookies)", service_url, use_container_width=True)
+#     st.code(handoff_api_url, language="text")
+
+
+
+
+
 def render_handoff_ui(service_url: str, session_id: str):
-    st.success("✅ Relay login OK. Ready to inject cookies automatically (via extension).")
-    st.write("Target service:", service_url)
-    st.write("Handoff session id (expires quickly):", session_id)
-
-    # This URL is what the extension will read from (backend endpoint)
     handoff_api_url = f"{API_URL}/sharing/handoff/{session_id}"
+    connect_url = make_extension_connect_url(handoff_api_url)
 
-    st.markdown("### Step: click the button below (extension must be installed)")
     st.markdown(
-        f"""
-Open this in your browser (same browser where extension is installed):
-- Handoff API URL (extension will fetch it): `{handoff_api_url}`
-- Then extension will inject cookies into the target domain and open `{service_url}`
         """
+        <div class="zkp-card">
+          <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+            <div style="flex:1;">
+              <div class="zkp-badge">BROWSER HANDOFF</div>
+              <h3 style="margin:10px 0 6px 0;">Open a connected profile (automatic injection)</h3>
+              <div class="zkp-muted">
+                The backend prepared a short-lived handoff session. Your extension can fetch cookies + storage
+                and open the website already authenticated.
+              </div>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    # Just open target URL; extension will inject cookies before/after
-    st.link_button("🚀 Open target service (extension will inject cookies)", service_url, use_container_width=True)
-    st.code(handoff_api_url, language="text")
+    col1, col2 = st.columns([1.2, 1], gap="large")
+    with col1:
+        st.success("✅ Relay login OK. Handoff session created.")
+        st.write("Target service:", service_url)
+        st.caption("Handoff expires quickly. Use it immediately.")
+
+        st.markdown("#### Option A — One click (recommended)")
+        st.link_button(
+            "🚀 Send to extension & open connected profile",
+            connect_url,
+            use_container_width=True,
+        )
+        st.caption("This opens a URL that your extension listens to, then injection runs automatically.")
+
+        st.markdown("#### Option B — Manual (fallback)")
+        st.code(handoff_api_url, language="text")
+
+        st.download_button(
+            "⬇️ Download handoff url (txt)",
+            data=handoff_api_url,
+            file_name="handoff_url.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+
+    with col2:
+        st.info("Extension requirements")
+        st.markdown(
+            """
+- Install the Chrome extension
+- Keep it enabled
+- Must allow host permissions for:
+  - your API (e.g. `http://localhost:8001/*`)
+  - target website (e.g. `https://recolyse.com/*`)
+            """
+        )
+
+
+
+
+
+
+
+
+
 
 
 

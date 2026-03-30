@@ -19,7 +19,8 @@ from fastapi import FastAPI, Depends, HTTPException, Header
 import jwt
 import requests
 
- 
+from backend.routers.extension_bridge import router as extension_bridge_router
+
 
 
 
@@ -68,6 +69,9 @@ app.include_router(auth.router)
 app.include_router(credentials.router)
 app.include_router(sharing.router)
 app.include_router(keycloak_sharing.router)  # <-- add
+app.include_router(extension_bridge_router)
+
+
 
 @app.get("/")
 def root():

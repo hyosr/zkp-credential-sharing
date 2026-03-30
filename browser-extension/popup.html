@@ -1,4 +1,4 @@
-<!doctype html>
+<!-- <!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -22,6 +22,68 @@
     </div>
 
     <div class="status" id="status"></div>
+
+    <script src="popup.js"></script>
+  </body>
+</html> -->
+
+
+
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ZKP Handoff</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="logo">ZKP</div>
+        <div class="title">
+          <div class="name">Credential Sharing</div>
+          <div class="subtitle">Secure login handoff</div>
+        </div>
+      </header>
+
+      <section class="card">
+        <label class="label" for="baseUrl">Backend URL</label>
+        <input id="baseUrl" class="input" placeholder="http://localhost:8001" />
+
+        <label class="label" for="token">Handoff token or URL</label>
+        <textarea
+          id="token"
+          class="textarea"
+          rows="3"
+          placeholder="Paste session_id (e.g. PfidcY0cNI2b...) or full http://.../sharing/handoff/..."
+        ></textarea>
+
+        <div class="row">
+          <button id="go" class="btn primary">
+            <span id="goText">Connect</span>
+            <span id="spinner" class="spinner hidden"></span>
+          </button>
+          <button id="clear" class="btn ghost" title="Clear saved token">Clear</button>
+        </div>
+
+        <div id="status" class="status" aria-live="polite"></div>
+
+        <details class="details">
+          <summary>Tips</summary>
+          <ul>
+            <li>Press <b>Enter</b> to connect (Shift+Enter for new line).</li>
+            <li>You can paste either a <b>token</b> or the full <b>handoff URL</b>.</li>
+            <li>The extension saves your last backend URL and token locally.</li>
+          </ul>
+        </details>
+      </section>
+
+      <footer class="footer">
+        <span class="muted">ZKP handoff opens a connected profile tab after injection.</span>
+      </footer>
+    </div>
 
     <script src="popup.js"></script>
   </body>
