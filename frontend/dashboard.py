@@ -17,6 +17,8 @@ import secrets
 import time
 from typing import Optional
 
+import urllib
+
 import requests
 import streamlit as st
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -633,123 +635,327 @@ def page_login():
 
 
 
+# def page_keycloak_device_flow():
+#     st.title("🔐 Keycloak Passwordless Share (Device Authorization Grant)")
+#     st.markdown("""
+# This module implements option B: sharing access **without sharing the password**.
+
+# Recipient starts a Device Flow → obtains a user_code  
+# Owner logs in directly on Keycloak  
+# Backend retrieves an access_token via polling
+#     """)
+
+#     col1, col2 = st.columns(2)
+
+#     with col1:
+#         st.subheader("Step 1 — Start device flow")
+#         if st.button("Start device flow", use_container_width=True):
+#             r = api_post("/keycloak-sharing/device/start", {})
+#             if "device_code" in r:
+#                 st.session_state["kc_device"] = r
+#                 st.success("Device flow started")
+#             else:
+#                 st.error(r.get("detail", r))
+
+#         device = st.session_state.get("kc_device")
+#         if device:
+#             st.write("verification_uri:", device.get("verification_uri"))
+#             st.write("user_code:", device.get("user_code"))
+#             if device.get("verification_uri_complete"):
+#                 st.write("verification_uri_complete:", device.get("verification_uri_complete"))
+#             st.code(device.get("user_code", ""), language="text")
+
+#     with col2:
+#         st.subheader("Step 2 — Poll for token")
+#         st.caption("After logging in on Keycloak using the verification URL, poll until token is issued.")
+#         if st.button("Poll for token", use_container_width=True):
+#             device = st.session_state.get("kc_device")
+#             if not device:
+#                 st.error("Start device flow first.")
+#                 return
+
+#             r = api_post("/keycloak-sharing/device/poll", {
+#                 "device_code": device["device_code"],
+#                 "interval": int(device.get("interval", 5)),
+#             })
+
+#             if "access_token" in r:
+#                 st.session_state["kc_token"] = r
+#                 st.success("Access token received")
+#             else:
+#                 st.error(r.get("detail", r))
+
+#         token = st.session_state.get("kc_token")
+#         if token:
+#             st.write("token_type:", token.get("token_type"))
+#             st.write("expires_in:", token.get("expires_in"))
+#             st.text_area("access_token", token.get("access_token", ""), height=180)
+
+
+# #------------------------------------------------------------------
+
+
+
+#     st.markdown("---")
+#     st.subheader("Owner — Generate passwordless handoff link (to share)")
+
+#     if not st.session_state.get("jwt_token"):
+#         st.error("You must be logged in with ZKP (JWT) as owner.")
+#     else:
+#         share_id = st.number_input("Share ID to handoff", min_value=1, step=1, value=1)
+
+#         if st.button("Generate Keycloak device link", use_container_width=True):
+#             with st.spinner("Starting device flow..."):
+#                 r = api_post(
+#                     f"/keycloak-sharing/handoff/start?share_id={int(share_id)}",
+#                     data={},
+#                     token=st.session_state.jwt_token,
+#                 )
+#         if "kc_session_id" in r:
+#             st.session_state["kc_handoff"] = r
+#             st.success("Link generated.")
+#         else:
+#             st.error("Failed to generate link")
+#             st.json(r)
+
+#     handoff = st.session_state.get("kc_handoff")
+#     if handoff:
+#         st.write("recipient_link:")
+#         st.code(handoff["recipient_link"], language="text")
+#         st.write("verification_uri_complete:")
+#         st.code(handoff["device_flow"].get("verification_uri_complete", ""), language="text")
+#         st.write("user_code:")
+#         st.code(handoff["device_flow"].get("user_code", ""), language="text")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#     # Step 3: Use token to retrieve shared secret
+#     # st.markdown("---")
+#     # st.subheader("Step 3 — Use token to retrieve the shared secret (protected endpoint)")
+
+#     # access_token = st.session_state.get("kc_token", {}).get("access_token")
+#     # if not access_token:
+#     #     st.info("Complete Step 2 first (get an access_token).")
+#     # else:
+#     #     cred_id = st.number_input("Credential ID (or share ID)", min_value=1, step=1, value=1)
+
+#     #     if st.button("Fetch secret from backend", use_container_width=True):
+#     #         headers = {"Authorization": f"Bearer {access_token}"}
+#     #         try:
+#     #             # Appel à l'endpoint protégé (à créer dans le backend)
+#     #             resp = requests.get(f"{API_URL}/protected/credential/{cred_id}", headers=headers, timeout=30)
+#     #             if resp.status_code == 200:
+#     #                 data = resp.json()
+#     #                 st.success("✅ Secret retrieved successfully!")
+#     #                 st.code(data.get("secret", "No secret in response"), language="text")
+#     #             else:
+#     #                 st.error(f"❌ Failed to retrieve secret (HTTP {resp.status_code})")
+#     #                 st.json(resp.text if resp.text else {"error": "Empty response"})
+#     #         except Exception as e:
+#     #             st.error(f"Request failed: {e}")
+
+
+
+
+#     st.markdown("---")
+#     st.subheader("Step 3 — Retrieve the shared secret (protected by Keycloak token)")
+
+#     access_token = st.session_state.get("kc_token", {}).get("access_token")
+#     if not access_token:
+#         st.info("Complete Step 2 first (get an access_token).")
+#         return
+
+#     share_id = st.number_input("Share ID", min_value=1, step=1, value=1)
+
+#     if st.button("🔓 Retrieve secret", use_container_width=True):
+#         headers = {"Authorization": f"Bearer {access_token}"}
+#         try:
+#             resp = requests.get(f"{API_URL}/keycloak/secret/{share_id}", headers=headers, timeout=30)
+
+#             if resp.status_code == 200:
+#                 data = resp.json()
+#                 st.success("✅ Secret retrieved successfully (authorized via Keycloak).")
+#                 st.write("Credential:", data.get("credential_name"))
+#                 st.write("Service URL:", data.get("service_url"))
+#                 st.write("Username:", data.get("username"))
+#                 st.code(data.get("secret", ""), language="text")
+#             else:
+#                 # ✅ Important: secret is NEVER shown when token invalid/expired
+#                 try:
+#                     err = resp.json()
+#                 except Exception:
+#                     err = {"status_code": resp.status_code, "text": resp.text[:2000]}
+#                 st.error(f"❌ Failed (HTTP {resp.status_code})")
+#                 st.json(err)
+
+#         except Exception as e:
+#             st.error(f"Request failed: {e}")
+
+
+
+
+
 def page_keycloak_device_flow():
     st.title("🔐 Keycloak Passwordless Share (Device Authorization Grant)")
-    st.markdown("""
+    st.markdown(
+        """
 This module implements option B: sharing access **without sharing the password**.
 
-Recipient starts a Device Flow → obtains a user_code  
-Owner logs in directly on Keycloak  
-Backend retrieves an access_token via polling
-    """)
+**Goal:** Recipient logs in via Keycloak Device Flow, backend performs Relay Login and returns a **handoff session**
+for the browser extension to inject cookies/storage — **the password is never shown to the recipient**.
+"""
+    )
 
-    col1, col2 = st.columns(2)
+    # ---------- Owner (A) ----------
+    st.markdown("---")
+    st.subheader("Owner (A) — Generate passwordless handoff link")
+
+    if not st.session_state.get("jwt_token"):
+        st.warning("You must be logged in with ZKP (owner session) to generate a handoff link.")
+        st.info("Go to 🔐 ZKP Login first.")
+    else:
+        colA, colB = st.columns([1, 1], gap="large")
+        with colA:
+            st.caption("Enter the Share ID (SharedAccess.id) you want to hand off.")
+            share_id = st.number_input("Share ID", min_value=1, step=1, value=1)
+
+            if st.button("🚀 Generate Keycloak device link", use_container_width=True):
+                with st.spinner("Starting device flow on Keycloak..."):
+                    # endpoint exists after you add backend/routers/keycloak_handoff.py
+                    r = api_post(
+                        f"/keycloak-sharing/handoff/start?share_id={int(share_id)}",
+                        data={},
+                        token=st.session_state.jwt_token,  # Owner JWT (ZKP)
+                    )
+
+                if isinstance(r, dict) and r.get("kc_session_id"):
+                    st.session_state["kc_handoff"] = r
+                    st.success("✅ Link generated. Share it with the recipient.")
+                else:
+                    st.error("❌ Failed to generate handoff link.")
+                    st.json(r)
+
+        with colB:
+            st.markdown("**What you share with the recipient**")
+            handoff = st.session_state.get("kc_handoff")
+            if not handoff:
+                st.info("Generate a link first.")
+            else:
+                df = handoff.get("device_flow", {}) or {}
+                st.write("recipient_link:")
+                st.code(handoff.get("recipient_link", ""), language="text")
+
+                st.write("verification_uri_complete:")
+                st.code(df.get("verification_uri_complete", ""), language="text")
+
+                st.write("user_code:")
+                st.code(df.get("user_code", ""), language="text")
+
+                st.caption(f"kc_session_id expires in ~{handoff.get('expires_in', '??')} seconds")
+
+    # ---------- Recipient (B) ----------
+    st.markdown("---")
+    st.subheader("Recipient (B) — Authorize on Keycloak, then finalize (no password reveal)")
+
+    handoff = st.session_state.get("kc_handoff") or {}
+    default_kc_session_id = handoff.get("kc_session_id", "")
+
+    col1, col2 = st.columns([1, 1], gap="large")
 
     with col1:
-        st.subheader("Step 1 — Start device flow")
-        if st.button("Start device flow", use_container_width=True):
-            r = api_post("/keycloak-sharing/device/start", {})
-            if "device_code" in r:
-                st.session_state["kc_device"] = r
-                st.success("Device flow started")
-            else:
-                st.error(r.get("detail", r))
+        st.markdown("### Step 1 — Open Keycloak device page")
+        df = (handoff.get("device_flow") or {}) if handoff else {}
 
-        device = st.session_state.get("kc_device")
-        if device:
-            st.write("verification_uri:", device.get("verification_uri"))
-            st.write("user_code:", device.get("user_code"))
-            if device.get("verification_uri_complete"):
-                st.write("verification_uri_complete:", device.get("verification_uri_complete"))
-            st.code(device.get("user_code", ""), language="text")
+        verification_uri_complete = df.get("verification_uri_complete", "")
+        user_code = df.get("user_code", "")
+
+        if verification_uri_complete:
+            st.link_button("Open verification link", verification_uri_complete, use_container_width=True)
+        if user_code:
+            st.code(user_code, language="text")
+
+        st.caption(
+            "Recipient logs in on Keycloak and approves. Then proceed to Step 2 (finalize)."
+        )
 
     with col2:
-        st.subheader("Step 2 — Poll for token")
-        st.caption("After logging in on Keycloak using the verification URL, poll until token is issued.")
-        if st.button("Poll for token", use_container_width=True):
-            device = st.session_state.get("kc_device")
-            if not device:
-                st.error("Start device flow first.")
-                return
+        st.markdown("### Step 2 — Finalize (backend polls Keycloak + runs relay login)")
+        kc_session_id = st.text_input("kc_session_id", value=default_kc_session_id)
 
-            r = api_post("/keycloak-sharing/device/poll", {
-                "device_code": device["device_code"],
-                "interval": int(device.get("interval", 5)),
-            })
-
-            if "access_token" in r:
-                st.session_state["kc_token"] = r
-                st.success("Access token received")
+        if st.button("✅ Finalize and get extension handoff", use_container_width=True):
+            if not kc_session_id.strip():
+                st.warning("Paste kc_session_id first.")
             else:
-                st.error(r.get("detail", r))
+                with st.spinner("Finalizing (polling Keycloak + Relay Login)..."):
+                    try:
+                        resp = requests.post(
+                            f"{API_URL}/keycloak-sharing/handoff/finalize/{kc_session_id.strip()}",
+                            timeout=140,
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            st.session_state["kc_finalize"] = data
+                            st.success("✅ Finalized. Now inject via extension.")
+                        else:
+                            st.error(f"❌ Finalize failed (HTTP {resp.status_code})")
+                            try:
+                                st.json(resp.json())
+                            except Exception:
+                                st.write(resp.text)
+                    except Exception as e:
+                        st.error(f"Request failed: {e}")
 
-        token = st.session_state.get("kc_token")
-        if token:
-            st.write("token_type:", token.get("token_type"))
-            st.write("expires_in:", token.get("expires_in"))
-            st.text_area("access_token", token.get("access_token", ""), height=180)
-
-    # Step 3: Use token to retrieve shared secret
-    # st.markdown("---")
-    # st.subheader("Step 3 — Use token to retrieve the shared secret (protected endpoint)")
-
-    # access_token = st.session_state.get("kc_token", {}).get("access_token")
-    # if not access_token:
-    #     st.info("Complete Step 2 first (get an access_token).")
-    # else:
-    #     cred_id = st.number_input("Credential ID (or share ID)", min_value=1, step=1, value=1)
-
-    #     if st.button("Fetch secret from backend", use_container_width=True):
-    #         headers = {"Authorization": f"Bearer {access_token}"}
-    #         try:
-    #             # Appel à l'endpoint protégé (à créer dans le backend)
-    #             resp = requests.get(f"{API_URL}/protected/credential/{cred_id}", headers=headers, timeout=30)
-    #             if resp.status_code == 200:
-    #                 data = resp.json()
-    #                 st.success("✅ Secret retrieved successfully!")
-    #                 st.code(data.get("secret", "No secret in response"), language="text")
-    #             else:
-    #                 st.error(f"❌ Failed to retrieve secret (HTTP {resp.status_code})")
-    #                 st.json(resp.text if resp.text else {"error": "Empty response"})
-    #         except Exception as e:
-    #             st.error(f"Request failed: {e}")
-
-
-
-
+    # ---------- Show result for extension injection ----------
     st.markdown("---")
-    st.subheader("Step 3 — Retrieve the shared secret (protected by Keycloak token)")
+    st.subheader("Browser Extension — Inject session & open connected profile")
 
-    access_token = st.session_state.get("kc_token", {}).get("access_token")
-    if not access_token:
-        st.info("Complete Step 2 first (get an access_token).")
+    finalize = st.session_state.get("kc_finalize")
+    if not finalize:
+        st.info("Finalize first. You will receive a handoff session_id for the extension.")
         return
 
-    share_id = st.number_input("Share ID", min_value=1, step=1, value=1)
+    handoff_info = (finalize or {}).get("handoff") or {}
+    session_id = handoff_info.get("session_id")
+    current_url = finalize.get("current_url")
+    service_url = finalize.get("service_url")
 
-    if st.button("🔓 Retrieve secret", use_container_width=True):
-        headers = {"Authorization": f"Bearer {access_token}"}
-        try:
-            resp = requests.get(f"{API_URL}/keycloak/secret/{share_id}", headers=headers, timeout=30)
+    if not session_id:
+        st.error("Finalize response missing handoff.session_id")
+        st.json(finalize)
+        return
 
-            if resp.status_code == 200:
-                data = resp.json()
-                st.success("✅ Secret retrieved successfully (authorized via Keycloak).")
-                st.write("Credential:", data.get("credential_name"))
-                st.write("Service URL:", data.get("service_url"))
-                st.write("Username:", data.get("username"))
-                st.code(data.get("secret", ""), language="text")
-            else:
-                # ✅ Important: secret is NEVER shown when token invalid/expired
-                try:
-                    err = resp.json()
-                except Exception:
-                    err = {"status_code": resp.status_code, "text": resp.text[:2000]}
-                st.error(f"❌ Failed (HTTP {resp.status_code})")
-                st.json(err)
+    handoff_url = f"{API_URL}/sharing/handoff/{session_id}"
 
-        except Exception as e:
-            st.error(f"Request failed: {e}")
+    st.success("✅ Handoff session ready (one-time, short-lived).")
+    st.write("Service URL:", service_url)
+    st.write("Current URL (after login):", current_url)
+
+    st.markdown("### Provide this to the Chrome extension")
+    st.code(handoff_url, language="text")
+    st.caption(f"Expires in ~{handoff_info.get('expires_in', '??')} seconds. One-time consumption.")
+
+    st.warning(
+        "Important: /sharing/handoff/{session_id} is one-time. "
+        "Do not open it manually in the browser before using the extension."
+    )
+
+
+
+
 
 
 
@@ -1082,14 +1288,7 @@ def page_share():
 
 def page_relay_login():
     st.title("🚪 Secure Relay Login (without revealing the password)")
-    st.markdown("""
-This mode allows the recipient to log in to a *classic* app (username/password)
-**without ever seeing the password**.
-
-The backend uses Playwright to perform the login, then stores the cookies server-side
-(temporarily). Then, a Chrome extension retrieves these cookies via a `handoff session_id`
-and automatically injects them into the browser.
-""")
+    
 
     if not st.session_state.get("jwt_token"):
         st.error("You must be logged in (JWT ZKP) to use Relay Login.")
@@ -1115,34 +1314,50 @@ and automatically injects them into the browser.
             session_id = result["handoff"]["session_id"]
             expires_in = result["handoff"].get("expires_in")
 
+
+
+
+
+
+            # ... inside the place where you have session_id:
             handoff_url = f"{API_URL}/sharing/handoff/{session_id}"
+            bridge_url = f"{API_URL}/extension/connect?handoff={urllib.parse.quote(handoff_url, safe='')}"
 
-            st.markdown("### Next Step (Automatic injection via Chrome extension)")
-            st.write("Handoff URL (to provide to the extension):")
-            st.code(handoff_url, language="text")
-            st.caption(f"Expires in ~{expires_in} seconds.")
+            st.link_button("🚀 Open connected profile", bridge_url, use_container_width=True)
+            st.caption("This will trigger the Chrome extension automatically if installed.")
 
-            st.warning("""
-Streamlit cannot inject cookies into your browser (browser security limitation).
-Install the provided Chrome extension, paste this handoff URL into the extension, then click the icon.
-The extension will:
-1) download cookies from the backend,
-2) inject them into the target domain,
-3) open the logged-in site.
-""")
-            st.markdown(
-    """
-<div class="zkp-card">
-  <div style="display:flex; gap:10px; flex-wrap:wrap;">
-    <div class="zkp-badge">1) Relay Login</div>
-    <div class="zkp-badge">2) Handoff Session</div>
-    <div class="zkp-badge">3) Extension Injection</div>
-    <div class="zkp-badge">4) Connected Profile</div>
-  </div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
+
+
+
+
+#             handoff_url = f"{API_URL}/sharing/handoff/{session_id}"
+
+#             st.markdown("### Next Step (Automatic injection via Chrome extension)")
+#             st.write("Handoff URL (to provide to the extension):")
+#             st.code(handoff_url, language="text")
+#             st.caption(f"Expires in ~{expires_in} seconds.")
+
+#             st.warning("""
+# Streamlit cannot inject cookies into your browser (browser security limitation).
+# Install the provided Chrome extension, paste this handoff URL into the extension, then click the icon.
+# The extension will:
+# 1) download cookies from the backend,
+# 2) inject them into the target domain,
+# 3) open the logged-in site.
+# """)
+#             st.markdown(
+#     """
+# <div class="zkp-card">
+#   <div style="display:flex; gap:10px; flex-wrap:wrap;">
+#     <div class="zkp-badge">1) Relay Login</div>
+#     <div class="zkp-badge">2) Handoff Session</div>
+#     <div class="zkp-badge">3) Extension Injection</div>
+#     <div class="zkp-badge">4) Connected Profile</div>
+#   </div>
+# </div>
+# """,
+#     unsafe_allow_html=True,
+# )
             
         else:
             st.error(f"❌ Relay login failed: {result.get('detail', result)}")
@@ -1518,23 +1733,3 @@ s = r-cx mod q → verify g^s·Y^c=Y_r → nothing (token invalidated)
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

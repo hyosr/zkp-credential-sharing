@@ -5,6 +5,26 @@ import urllib.parse
 
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
+
+
+import os  # <-- ADD THIS
+
+DEFAULT_TIMEOUT_MS = 30_000
+
+# 1 = headless (no visible browser window), 0 = visible browser (debug)
+HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "1") == "1"
+
+
+
+
+
+
+
+
+
+
+
+
 DEFAULT_TIMEOUT_MS = 30_000
 
 
@@ -149,7 +169,26 @@ async def login_and_get_cookies(
 
         async with async_playwright() as p:
             # Keep headless=False for debugging as requested
-            browser = await p.chromium.launch(headless=False)
+            # browser = await p.chromium.launch(headless=False)
+
+            # Use headless browser by default so no login tab/window shows up
+            browser = await p.chromium.launch(
+                headless=HEADLESS,
+                args=[
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+        ],
+)
+
+
+
+
+
+
+
+
+
+
             context = await browser.new_context()
             page = await context.new_page()
             page.set_default_timeout(DEFAULT_TIMEOUT_MS)

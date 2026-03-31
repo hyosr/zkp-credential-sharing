@@ -141,6 +141,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 
 
+// function isBridgeUrl(url) {
+//   try {
+//     const u = new URL(url);
+//     return (
+//       u.origin === "http://localhost:8001" &&
+//       u.pathname === "/extension/connect" &&
+//       u.searchParams.get("handoff")
+//     );
+//   } catch {
+//     return false;
+//   }
+// }
+
+// chrome.webNavigation.onCommitted.addListener(async (details) => {
+//   if (details.frameId !== 0) return; // top frame only
+//   if (!isBridgeUrl(details.url)) return;
+
+//   const u = new URL(details.url);
+//   const handoffUrl = u.searchParams.get("handoff");
+
+//   try {
+//     await chrome.storage.local.set({ handoffUrl });
+//     await doHandoff(handoffUrl);
+
+//     // Close the bridge tab (optional)
+//     chrome.tabs.remove(details.tabId);
+//   } catch (e) {
+//     console.error("Bridge handoff failed:", e);
+//   }
+// });
+
+
+
+
+
+
+
 function isBridgeUrl(url) {
   try {
     const u = new URL(url);
@@ -162,15 +199,18 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
   const handoffUrl = u.searchParams.get("handoff");
 
   try {
+    // Save for history and run immediately
     await chrome.storage.local.set({ handoffUrl });
     await doHandoff(handoffUrl);
 
-    // Close the bridge tab (optional)
+    // optional: close the bridge tab
     chrome.tabs.remove(details.tabId);
   } catch (e) {
     console.error("Bridge handoff failed:", e);
   }
 });
+
+
 
 
 
