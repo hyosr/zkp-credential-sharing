@@ -690,29 +690,81 @@ Backend retrieves an access_token via polling
             st.text_area("access_token", token.get("access_token", ""), height=180)
 
     # Step 3: Use token to retrieve shared secret
+    # st.markdown("---")
+    # st.subheader("Step 3 — Use token to retrieve the shared secret (protected endpoint)")
+
+    # access_token = st.session_state.get("kc_token", {}).get("access_token")
+    # if not access_token:
+    #     st.info("Complete Step 2 first (get an access_token).")
+    # else:
+    #     cred_id = st.number_input("Credential ID (or share ID)", min_value=1, step=1, value=1)
+
+    #     if st.button("Fetch secret from backend", use_container_width=True):
+    #         headers = {"Authorization": f"Bearer {access_token}"}
+    #         try:
+    #             # Appel à l'endpoint protégé (à créer dans le backend)
+    #             resp = requests.get(f"{API_URL}/protected/credential/{cred_id}", headers=headers, timeout=30)
+    #             if resp.status_code == 200:
+    #                 data = resp.json()
+    #                 st.success("✅ Secret retrieved successfully!")
+    #                 st.code(data.get("secret", "No secret in response"), language="text")
+    #             else:
+    #                 st.error(f"❌ Failed to retrieve secret (HTTP {resp.status_code})")
+    #                 st.json(resp.text if resp.text else {"error": "Empty response"})
+    #         except Exception as e:
+    #             st.error(f"Request failed: {e}")
+
+
+
+
     st.markdown("---")
-    st.subheader("Step 3 — Use token to retrieve the shared secret (protected endpoint)")
+    st.subheader("Step 3 — Retrieve the shared secret (protected by Keycloak token)")
 
     access_token = st.session_state.get("kc_token", {}).get("access_token")
     if not access_token:
         st.info("Complete Step 2 first (get an access_token).")
-    else:
-        cred_id = st.number_input("Credential ID (or share ID)", min_value=1, step=1, value=1)
+        return
 
-        if st.button("Fetch secret from backend", use_container_width=True):
-            headers = {"Authorization": f"Bearer {access_token}"}
-            try:
-                # Appel à l'endpoint protégé (à créer dans le backend)
-                resp = requests.get(f"{API_URL}/protected/credential/{cred_id}", headers=headers, timeout=30)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    st.success("✅ Secret retrieved successfully!")
-                    st.code(data.get("secret", "No secret in response"), language="text")
-                else:
-                    st.error(f"❌ Failed to retrieve secret (HTTP {resp.status_code})")
-                    st.json(resp.text if resp.text else {"error": "Empty response"})
-            except Exception as e:
-                st.error(f"Request failed: {e}")
+    share_id = st.number_input("Share ID", min_value=1, step=1, value=1)
+
+    if st.button("🔓 Retrieve secret", use_container_width=True):
+        headers = {"Authorization": f"Bearer {access_token}"}
+        try:
+            resp = requests.get(f"{API_URL}/keycloak/secret/{share_id}", headers=headers, timeout=30)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                st.success("✅ Secret retrieved successfully (authorized via Keycloak).")
+                st.write("Credential:", data.get("credential_name"))
+                st.write("Service URL:", data.get("service_url"))
+                st.write("Username:", data.get("username"))
+                st.code(data.get("secret", ""), language="text")
+            else:
+                # ✅ Important: secret is NEVER shown when token invalid/expired
+                try:
+                    err = resp.json()
+                except Exception:
+                    err = {"status_code": resp.status_code, "text": resp.text[:2000]}
+                st.error(f"❌ Failed (HTTP {resp.status_code})")
+                st.json(err)
+
+        except Exception as e:
+            st.error(f"Request failed: {e}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def page_register():

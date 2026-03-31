@@ -21,7 +21,9 @@ import requests
 
 from backend.routers.extension_bridge import router as extension_bridge_router
 
+from backend.routers.keycloak_secret import router as keycloak_secret_router
 
+from backend.routers.keycloak_handoff import router as keycloak_handoff_router
 
 
 
@@ -71,7 +73,9 @@ app.include_router(sharing.router)
 app.include_router(keycloak_sharing.router)  # <-- add
 app.include_router(extension_bridge_router)
 
+app.include_router(keycloak_secret_router)
 
+app.include_router(keycloak_handoff_router)
 
 @app.get("/")
 def root():
