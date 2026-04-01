@@ -1,5 +1,3 @@
-
-
 {
   "manifest_version": 3,
   "name": "ZKP Share Cookie Injector",
@@ -11,7 +9,11 @@
   ],
   "action": {
     "default_title": "Inject cookies from ZKP share",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": "icon32.png"
+  },
+  "icons": {
+    "32": "icon32.png"
   },
   "background": {
     "service_worker": "background.js"
