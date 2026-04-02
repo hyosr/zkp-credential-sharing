@@ -4,6 +4,66 @@ function sleep(ms) {
 
 
 
+
+function originFromUrl(u) {
+  try {
+    const x = new URL(u);
+    return `${x.protocol}//${x.host}/`;
+  } catch {
+    return u;
+  }
+}
+
+function hostFromUrl(u) {
+  try { return new URL(u).hostname.toLowerCase(); } catch { return ""; }
+}
+
+function normalizeDomain(d) {
+  return (d || "").toLowerCase().replace(/^\./, "");
+}
+
+function domainMatches(cookieDomain, targetHost) {
+  const cd = normalizeDomain(cookieDomain);
+  const h = normalizeDomain(targetHost);
+  return cd === h || h.endsWith("." + cd) || cd.endsWith("." + h);
+}
+
+
+
+
+function waitForTabComplete(tabId, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+
+    function cleanup() {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+    }
+
+    function done() {
+      cleanup();
+      resolve();
+    }
+
+    function onUpdated(id, info) {
+      if (id === tabId && info.status === "complete") return done();
+      if (Date.now() - t0 > timeoutMs) return done();
+    }
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    setTimeout(done, timeoutMs);
+  });
+}
+
+
+
+
+
+
+
+
+
+
+
 async function fetchJson(url) {
   const r = await fetch(url, { method: "GET" });
   if (!r.ok) {
@@ -133,8 +193,85 @@ async function injectStorageAndReload(tabId, localStorageObj, sessionStorageObj)
   await chrome.tabs.reload(tabId);
 }
 
-async function doHandoff(handoffUrl, opts = {}) {
+// async function doHandoff(handoffUrl, opts = {}) {
 
+//   const delayBetweenCookies = Number(opts.delayBetweenCookies ?? 150);
+//   const delayAfterInject = Number(opts.delayAfterInject ?? 800);
+
+//   const data = await fetchJson(handoffUrl);
+
+//   const serviceUrl = data.service_url;
+//   const currentUrl = data.current_url || serviceUrl;
+//   // const cookies = data.cookies || [];
+
+
+//   const cookies = Array.isArray(data.cookies) ? data.cookies : [];
+
+
+//   const localStorageObj = safeParseJsonObject(data.localStorage);
+//   const sessionStorageObj = safeParseJsonObject(data.sessionStorage);
+
+
+//   for (const c of cookies) {
+//     await setOneCookie(serviceUrl, c);
+//     await sleep(delayBetweenCookies);
+//   }
+
+//   await sleep(delayAfterInject);
+
+
+
+//   if (!serviceUrl) throw new Error("handoff response missing service_url");
+
+//   // Inject cookies first
+//   // await injectCookies(serviceUrl, cookies);
+
+
+//   await injectCookies(serviceUrl, cookies, {
+//     delayBeforeMs: 400,
+//     delayBetweenMs: 150,
+//     delayAfterMs: 600,
+//   });
+
+
+//   await sleep(600);
+
+
+//   // Open tab, inject storage, reload
+//   await new Promise((resolve) => {
+//     chrome.tabs.create({ url: currentUrl }, async (tab) => {
+//       try {
+//         await new Promise((r) => setTimeout(r, 700));
+//         await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
+//         chrome.tabs.update(tab.id, { active: true });
+//         resolve();
+//       } catch (e) {
+//         console.error(e);
+//         resolve();
+//       }
+//     });
+//   });
+
+
+//   const tab = await chrome.tabs.create({ url: currentUrl, active: true });
+
+
+
+
+
+//   await sleep(500);
+
+//   await injectStorageIntoTab(tab.id, localStorageObj, sessionStorageObj);
+
+//   // reload to make site read cookies/storage
+//   await chrome.tabs.reload(tab.id);
+// }
+
+
+
+
+
+async function doHandoff(handoffUrl, opts = {}) {
   const delayBetweenCookies = Number(opts.delayBetweenCookies ?? 150);
   const delayAfterInject = Number(opts.delayAfterInject ?? 800);
 
@@ -142,70 +279,51 @@ async function doHandoff(handoffUrl, opts = {}) {
 
   const serviceUrl = data.service_url;
   const currentUrl = data.current_url || serviceUrl;
-  // const cookies = data.cookies || [];
-
 
   const cookies = Array.isArray(data.cookies) ? data.cookies : [];
-
-
   const localStorageObj = safeParseJsonObject(data.localStorage);
   const sessionStorageObj = safeParseJsonObject(data.sessionStorage);
 
+  const targetHost = hostFromUrl(currentUrl || serviceUrl);
+  const cookieScopeUrl = originFromUrl(currentUrl || serviceUrl);
 
-  for (const c of cookies) {
-    await setOneCookie(serviceUrl, c);
+  // Inject only cookies for the target site (avoid 3rd-party noise)
+  const filteredCookies = cookies.filter((c) => domainMatches(c.domain, targetHost));
+
+  // 1) inject cookies slowly
+  for (const c of filteredCookies) {
+    await setOneCookie(cookieScopeUrl, c);
     await sleep(delayBetweenCookies);
   }
 
+  // 2) wait a bit so browser applies cookies before opening target
   await sleep(delayAfterInject);
 
-
-
-  if (!serviceUrl) throw new Error("handoff response missing service_url");
-
-  // Inject cookies first
-  // await injectCookies(serviceUrl, cookies);
-
-
-  await injectCookies(serviceUrl, cookies, {
-    delayBeforeMs: 400,
-    delayBetweenMs: 150,
-    delayAfterMs: 600,
-  });
-
-
-  await sleep(600);
-
-
-  // Open tab, inject storage, reload
-  await new Promise((resolve) => {
-    chrome.tabs.create({ url: currentUrl }, async (tab) => {
-      try {
-        await new Promise((r) => setTimeout(r, 700));
-        await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
-        chrome.tabs.update(tab.id, { active: true });
-        resolve();
-      } catch (e) {
-        console.error(e);
-        resolve();
-      }
-    });
-  });
-
-
+  // 3) open target page
   const tab = await chrome.tabs.create({ url: currentUrl, active: true });
 
+  // Wait until the page actually loads before injecting storage
+  await waitForTabComplete(tab.id, 15000);
 
-
-
-
-  await sleep(500);
-
+  // 4) inject storage (best-effort)
   await injectStorageIntoTab(tab.id, localStorageObj, sessionStorageObj);
 
-  // reload to make site read cookies/storage
+  // 5) reload so site re-reads cookies/storage
   await chrome.tabs.reload(tab.id);
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -218,7 +336,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         const url = msg.handoffUrl || (await chrome.storage.local.get(["handoffUrl"])).handoffUrl;
         if (!url) throw new Error("Missing handoffUrl");
-        await doHandoff(url);
+        // await doHandoff(url);
+        await doHandoff(msg.handoffUrl, msg.opts || {});
         sendResponse({ ok: true });
       } catch (e) {
         sendResponse({ ok: false, error: String(e?.message || e) });
