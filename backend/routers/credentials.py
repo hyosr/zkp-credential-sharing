@@ -196,3 +196,30 @@ def delete_credential(
     cred.updated_at = time.time()
     db.commit()
     return {"message": "Credential supprimé"}
+
+
+
+@router.delete("/{cred_id}/hard")
+def hard_delete_credential(
+    cred_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Supprime DEFINITIVEMENT un credential (hard delete).
+    Attention: irréversible. Supprime aussi les partages associés via cascade.
+    """
+    cred = (
+        db.query(Credential)
+        .filter(
+            Credential.id == cred_id,
+            Credential.owner_id == current_user.id,
+        )
+        .first()
+    )
+    if not cred:
+        raise HTTPException(status_code=404, detail="Credential non trouvé")
+
+    db.delete(cred)
+    db.commit()
+    return {"message": "Credential supprimé définitivement"}

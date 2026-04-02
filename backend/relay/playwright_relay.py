@@ -5,6 +5,7 @@ import urllib.parse
 
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
+import re
 
 
 import os  # <-- ADD THIS
@@ -81,6 +82,170 @@ async def _dump_storage(page) -> tuple[str | None, str | None]:
         }"""
     )
     return local_storage, session_storage
+
+
+
+
+
+
+
+#----------------------------------------------------------------------
+
+
+def _norm(s: str) -> str:
+    return (s or "").strip().lower()
+
+async def _attr(locator, name: str) -> str:
+    try:
+        v = await locator.get_attribute(name)
+        return v or ""
+    except Exception:
+        return ""
+
+def _score_username(attrs: dict) -> int:
+    hay = " ".join([_norm(attrs.get(k, "")) for k in ["name","id","placeholder","autocomplete","type","aria"]])
+    score = 0
+    if "email" in hay: score += 6
+    if "user" in hay or "username" in hay or "login" in hay: score += 5
+    if "phone" in hay or "tel" in hay: score -= 2
+    if attrs.get("type","") in ["email","text"]: score += 1
+    if attrs.get("autocomplete","") in ["email","username"]: score += 3
+    return score
+
+def _score_password(attrs: dict) -> int:
+    hay = " ".join([_norm(attrs.get(k, "")) for k in ["name","id","placeholder","autocomplete","type","aria"]])
+    score = 0
+    if attrs.get("type","") == "password": score += 10
+    if "password" in hay or "pass" in hay: score += 5
+    if attrs.get("autocomplete","") in ["current-password","new-password"]: score += 3
+    return score
+
+def _score_submit(attrs: dict, text: str) -> int:
+    t = _norm(text)
+    hay = " ".join([_norm(attrs.get(k, "")), t])
+    score = 0
+    if "sign in" in hay or "login" in hay or "connexion" in hay or "se connecter" in hay: score += 6
+    if "continue" in hay or "next" in hay: score += 2
+    if "submit" in _norm(attrs.get("type","")): score += 2
+    if "cancel" in hay or "register" in hay or "sign up" in hay: score -= 4
+    return score
+
+async def _auto_find_login_controls(page):
+    """
+    Returns (username_locator, password_locator, submit_locator, debug_dict)
+    best-effort for generic login forms.
+    """
+    debug = {"candidates": {"username": [], "password": [], "submit": []}}
+
+    # password candidates
+    pw = page.locator("input[type='password']")
+    pw_count = await pw.count()
+    if pw_count == 0:
+        return None, None, None, {"reason": "no password inputs found"}
+
+    # choose first visible password input
+    password_locator = None
+    best_pw_score = -999
+    for i in range(min(pw_count, 20)):
+        loc = pw.nth(i)
+        try:
+            await loc.wait_for(state="visible", timeout=2000)
+            attrs = {
+                "type": await _attr(loc, "type"),
+                "name": await _attr(loc, "name"),
+                "id": await _attr(loc, "id"),
+                "placeholder": await _attr(loc, "placeholder"),
+                "autocomplete": await _attr(loc, "autocomplete"),
+                "aria": await _attr(loc, "aria-label"),
+            }
+            sc = _score_password(attrs)
+            debug["candidates"]["password"].append({"attrs": attrs, "score": sc})
+            if sc > best_pw_score:
+                best_pw_score = sc
+                password_locator = loc
+        except Exception:
+            continue
+
+    if not password_locator:
+        return None, None, None, {"reason": "no visible password input"}
+
+    # username/email: look for inputs near password (same form preferred)
+    # broad candidates
+    user_inputs = page.locator("input:not([type='hidden']):not([type='password'])")
+    user_count = await user_inputs.count()
+
+    username_locator = None
+    best_user_score = -999
+    for i in range(min(user_count, 40)):
+        loc = user_inputs.nth(i)
+        try:
+            await loc.wait_for(state="visible", timeout=1200)
+            attrs = {
+                "type": await _attr(loc, "type"),
+                "name": await _attr(loc, "name"),
+                "id": await _attr(loc, "id"),
+                "placeholder": await _attr(loc, "placeholder"),
+                "autocomplete": await _attr(loc, "autocomplete"),
+                "aria": await _attr(loc, "aria-label"),
+            }
+            sc = _score_username(attrs)
+            debug["candidates"]["username"].append({"attrs": attrs, "score": sc})
+            if sc > best_user_score:
+                best_user_score = sc
+                username_locator = loc
+        except Exception:
+            continue
+
+    # submit candidates
+    submit_locator = None
+    best_submit_score = -999
+    buttons = page.locator("button, input[type='submit'], button[type='submit']")
+    btn_count = await buttons.count()
+    for i in range(min(btn_count, 40)):
+        b = buttons.nth(i)
+        try:
+            await b.wait_for(state="visible", timeout=1200)
+            text = ""
+            try:
+                text = await b.inner_text()
+            except Exception:
+                pass
+            attrs = {
+                "type": await _attr(b, "type"),
+                "name": await _attr(b, "name"),
+                "id": await _attr(b, "id"),
+                "aria": await _attr(b, "aria-label"),
+            }
+            sc = _score_submit(attrs, text)
+            debug["candidates"]["submit"].append({"attrs": attrs, "text": text, "score": sc})
+            if sc > best_submit_score:
+                best_submit_score = sc
+                submit_locator = b
+        except Exception:
+            continue
+
+    # require at least password + a submit; username may be optional in some sites
+    if not submit_locator:
+        return username_locator, password_locator, None, {"reason": "no visible submit button", **debug}
+
+    return username_locator, password_locator, submit_locator, debug
+
+
+
+
+#----------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 async def login_and_get_cookies(
@@ -169,19 +334,16 @@ async def login_and_get_cookies(
 
         async with async_playwright() as p:
             # Keep headless=False for debugging as requested
-            # browser = await p.chromium.launch(headless=False)
+            browser = await p.chromium.launch(headless=False)
 
             # Use headless browser by default so no login tab/window shows up
-            browser = await p.chromium.launch(
-                headless=HEADLESS,
-                args=[
-                    "--disable-dev-shm-usage",
-                    "--no-sandbox",
-        ],
-)
-
-
-
+#             browser = await p.chromium.launch(
+#                 headless=HEADLESS,
+#                 args=[
+#                     "--disable-dev-shm-usage",
+#                     "--no-sandbox",
+#         ],
+# )
 
 
 
@@ -194,6 +356,47 @@ async def login_and_get_cookies(
             page.set_default_timeout(DEFAULT_TIMEOUT_MS)
 
             await page.goto(service_url, wait_until=goto_wait_until)
+
+
+            #--------------------------------------------------------------------------------------------
+
+
+            # ---- Generic auto-detection (no per-site profile) ----
+            auto_user, auto_pw, auto_submit, auto_debug = await _auto_find_login_controls(page)
+
+            # If auto detection works, use it. Otherwise fallback to existing selector lists.
+            if auto_pw is not None and auto_submit is not None:
+            # Fill username if we found one (some logins are password-only or multi-step)
+                if auto_user is not None:
+                    try:
+                        await auto_user.click(timeout=2000)
+                        await auto_user.fill("")
+                        await auto_user.type(username, delay=35)
+                        used["username"] = "auto-detect"
+                    except Exception:
+                        pass
+
+                # Fill password
+                await auto_pw.click(timeout=2000)
+                await auto_pw.fill("")
+                await auto_pw.type(password, delay=35)
+                used["password"] = "auto-detect"
+
+                # Submit
+                try:
+                    await auto_submit.click(timeout=5000)
+                    used["submit"] = "auto-detect"
+                except Exception:
+                    await auto_pw.press("Enter")
+                    used["submit"] = "auto-detect:press-enter"
+            else:
+                # Fallback to existing profile-based logic below
+                pass
+
+
+
+
+#--------------------------------------------------------------------------------------------
 
             # Optional click to open login modal/page
             if open_login_selector:
@@ -306,6 +509,28 @@ async def login_and_get_cookies(
                 await page.wait_for_timeout(1500)
             except Exception:
                 pass
+
+
+
+            # After submit:
+            await page.wait_for_load_state("networkidle", timeout=15000)
+
+            # Best-effort: wait a bit for redirects/spa navigation
+            await page.wait_for_timeout(1500)
+
+            # Optional: if still on login page, wait a bit more
+            cur = page.url.lower()
+            if "login" in cur or "signin" in cur:
+                await page.wait_for_timeout(2000)
+
+
+
+            # After login is considered successful (or after submit + wait)
+            DEMO_PAUSE_MS = int(os.getenv("PLAYWRIGHT_DEMO_PAUSE_MS", "0"))
+            if DEMO_PAUSE_MS > 0:
+                await page.wait_for_timeout(DEMO_PAUSE_MS)
+
+
 
             # Capture all cookies known to this context (server-side auth state)
             cookies = await context.cookies()

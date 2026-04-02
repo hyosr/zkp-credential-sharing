@@ -60,6 +60,16 @@ async function injectCookies(serviceUrl, cookies) {
     if (c.name === "token" && c.domain === "recolyse.com") {
       await setOneCookie(serviceUrl, c, ".recolyse.com");
     }
+
+    if (!Array.isArray(cookies)) cookies = [];
+    for (const c of cookies) {
+      await setOneCookie(serviceUrl, c);
+
+      // Optional: also set token cookie for .recolyse.com
+      if (c.name === "token" && c.domain === "recolyse.com") {
+        await setOneCookie(serviceUrl, c, ".recolyse.com");
+    }
+  }
   }
 }
 
@@ -90,7 +100,11 @@ async function doHandoff(handoffUrl) {
 
   const serviceUrl = data.service_url;
   const currentUrl = data.current_url || serviceUrl;
-  const cookies = data.cookies || [];
+  // const cookies = data.cookies || [];
+
+
+  const cookies = Array.isArray(data.cookies) ? data.cookies : [];
+
 
   const localStorageObj = safeParseJsonObject(data.localStorage);
   const sessionStorageObj = safeParseJsonObject(data.sessionStorage);

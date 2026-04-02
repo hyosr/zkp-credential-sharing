@@ -173,6 +173,18 @@ def api_get(endpoint: str, token: str = None) -> dict:
         return r.json()
     except Exception as e:
         return {"error": str(e)}
+    
+
+
+
+def api_delete(path: str, token: str):
+    url = f"{API_URL}{path}"
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.delete(url, headers=headers, timeout=30)
+    try:
+        return r.json()
+    except Exception:
+        return {"status": r.status_code, "text": r.text}
 
 
 # ─── UI THEME (visual only) ───────────────────────────────────────────────────
@@ -1020,6 +1032,42 @@ def page_register():
             st.error(f"Error: {result.get('detail', result)}")
 
 
+# def page_credentials():
+#     st.title("🔑 My Encrypted Credentials")
+#     token = st.session_state.jwt_token
+#     if not token:
+#         st.error("Not logged in")
+#         return
+
+#     creds = api_get("/credentials/", token=token)
+#     if isinstance(creds, list):
+#         if not creds:
+#             st.info("No credentials. Create one!")
+#         for c in creds:
+#             with st.expander(f"🔒 {c['name']} — {c.get('service_url', '')}"):
+#                 col1, col2 = st.columns(2, gap="large")
+#                 with col1:
+#                     st.write(f"**Type:** {c['credential_type']}")
+#                     st.write(f"**Username:** {c.get('username', '—')}")
+#                     st.write(f"**Tags:** {c.get('tags', '—')}")
+#                 with col2:
+#                     st.write(f"**Created:** {time.strftime('%Y-%m-%d %H:%M', time.localtime(c['created_at']))}")
+#                     st.write(f"**Active shares:** {c.get('shares_count', 0)}")
+
+#                 if st.button("Decrypt locally", key=f"dec_{c['id']}"):
+#                     enc = api_get(f"/credentials/{c['id']}/encrypted", token=token)
+#                     if "encrypted_secret" in enc:
+#                         try:
+#                             secret = client_decrypt(enc["encrypted_secret"], st.session_state.master_password)
+#                             st.success(f"Secret: `{secret}`")
+#                         except Exception as e:
+#                             st.error(f"Decryption failed: {e}")
+#     else:
+#         st.error(f"API error: {creds}")
+
+
+
+
 def page_credentials():
     st.title("🔑 My Encrypted Credentials")
     token = st.session_state.jwt_token
@@ -1028,30 +1076,81 @@ def page_credentials():
         return
 
     creds = api_get("/credentials/", token=token)
-    if isinstance(creds, list):
-        if not creds:
-            st.info("No credentials. Create one!")
-        for c in creds:
-            with st.expander(f"🔒 {c['name']} — {c.get('service_url', '')}"):
-                col1, col2 = st.columns(2, gap="large")
-                with col1:
-                    st.write(f"**Type:** {c['credential_type']}")
-                    st.write(f"**Username:** {c.get('username', '—')}")
-                    st.write(f"**Tags:** {c.get('tags', '—')}")
-                with col2:
-                    st.write(f"**Created:** {time.strftime('%Y-%m-%d %H:%M', time.localtime(c['created_at']))}")
-                    st.write(f"**Active shares:** {c.get('shares_count', 0)}")
+    if not isinstance(creds, list):
+        st.error(f"API error: {creds}")
+        return
 
-                if st.button("Decrypt locally", key=f"dec_{c['id']}"):
-                    enc = api_get(f"/credentials/{c['id']}/encrypted", token=token)
+    if not creds:
+        st.info("No credentials. Create one!")
+        return
+
+    for c in creds:
+        cred_id = c["id"]
+
+        with st.expander(f"🔒 {c['name']} — {c.get('service_url', '')}"):
+            col1, col2 = st.columns(2, gap="large")
+            with col1:
+                st.write(f"**Type:** {c['credential_type']}")
+                st.write(f"**Username:** {c.get('username', '—')}")
+                st.write(f"**Tags:** {c.get('tags', '—')}")
+            with col2:
+                st.write(f"**Created:** {time.strftime('%Y-%m-%d %H:%M', time.localtime(c['created_at']))}")
+                st.write(f"**Active shares:** {c.get('shares_count', 0)}")
+
+            # --- Actions row
+            a1, a2, a3 = st.columns([1, 1, 2], gap="small")
+
+            with a1:
+                if st.button("Decrypt locally", key=f"dec_{cred_id}"):
+                    enc = api_get(f"/credentials/{cred_id}/encrypted", token=token)
                     if "encrypted_secret" in enc:
                         try:
                             secret = client_decrypt(enc["encrypted_secret"], st.session_state.master_password)
                             st.success(f"Secret: `{secret}`")
                         except Exception as e:
                             st.error(f"Decryption failed: {e}")
-    else:
-        st.error(f"API error: {creds}")
+                    else:
+                        st.error(f"API error: {enc}")
+
+            with a2:
+                # Soft delete (existing endpoint)
+                if st.button("Soft delete", key=f"soft_del_{cred_id}"):
+                    resp = api_delete(f"/credentials/{cred_id}", token=token)
+                    if isinstance(resp, dict) and resp.get("message"):
+                        st.success(resp["message"])
+                        st.rerun()
+                    else:
+                        st.error(f"Delete failed: {resp}")
+
+            # Danger zone for hard delete
+            st.divider()
+            st.subheader("⚠️ Danger zone")
+
+            st.warning("Hard delete is irreversible. It will permanently remove the credential and its shares.")
+
+            confirm = st.checkbox(
+                f"I understand. Permanently delete credential #{cred_id}",
+                key=f"confirm_hard_{cred_id}",
+            )
+
+            if st.button(
+                "Hard delete permanently",
+                type="primary",
+                disabled=not confirm,
+                key=f"hard_del_{cred_id}",
+            ):
+                resp = api_delete(f"/credentials/{cred_id}/hard", token=token)
+                if isinstance(resp, dict) and resp.get("message"):
+                    st.success(resp["message"])
+                    st.rerun()
+                else:
+                    st.error(f"Hard delete failed: {resp}")
+
+
+
+
+
+
 
 
 def page_new_credential():
@@ -1306,6 +1405,7 @@ def page_relay_login():
                 token=st.session_state.jwt_token,
             )
 
+
         if isinstance(result, dict) and "handoff" in result and result["handoff"].get("session_id"):
             st.success("✅ Relay login successful. Cookies stored server-side (not displayed).")
             st.write("URL after login:", result.get("relay", {}).get("current_url"))
@@ -1320,22 +1420,24 @@ def page_relay_login():
 
 
             # ... inside the place where you have session_id:
+            # handoff_url = f"{API_URL}/sharing/handoff/{session_id}"
+            # bridge_url = f"{API_URL}/extension/connect?handoff={urllib.parse.quote(handoff_url, safe='')}"
+
+            # st.link_button("🚀 Open connected profile", bridge_url, use_container_width=True)
+            # st.caption("This will trigger the Chrome extension automatically if installed.")
+
+
+
+
+
             handoff_url = f"{API_URL}/sharing/handoff/{session_id}"
-            bridge_url = f"{API_URL}/extension/connect?handoff={urllib.parse.quote(handoff_url, safe='')}"
 
-            st.link_button("🚀 Open connected profile", bridge_url, use_container_width=True)
-            st.caption("This will trigger the Chrome extension automatically if installed.")
-
-
-
+            st.markdown("### Next Step (Automatic injection via Chrome extension)")
+            st.write("Handoff URL (to provide to the extension):")
+            st.code(handoff_url, language="text")
+            st.caption(f"Expires in ~{expires_in} seconds.")
 
 
-#             handoff_url = f"{API_URL}/sharing/handoff/{session_id}"
-
-#             st.markdown("### Next Step (Automatic injection via Chrome extension)")
-#             st.write("Handoff URL (to provide to the extension):")
-#             st.code(handoff_url, language="text")
-#             st.caption(f"Expires in ~{expires_in} seconds.")
 
 #             st.warning("""
 # Streamlit cannot inject cookies into your browser (browser security limitation).

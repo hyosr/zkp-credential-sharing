@@ -5,7 +5,9 @@
   "permissions": ["cookies", "tabs", "storage", "scripting", "webNavigation"],
   "host_permissions": [
     "http://localhost:8001/*",
-    "https://recolyse.com/*"
+    "https://www.facebook.com/*",
+    "https://*/*",
+    "http://*/*"
   ],
   "action": {
     "default_title": "Inject cookies from ZKP share",
