@@ -60,6 +60,25 @@
           placeholder="Paste session_id (e.g. PfidcY0cNI2b...) or full http://.../sharing/handoff/..."
         ></textarea>
 
+
+
+
+
+        <div class="row" style="gap: 8px;">
+          <div style="flex: 1;">
+            <label class="label" for="delayBetweenCookies">Delay between cookies (ms)</label>
+            <input id="delayBetweenCookies" class="input" type="number" min="0" step="50" placeholder="150" />
+          </div>
+          <div style="flex: 1;">
+            <label class="label" for="delayAfterInject">Delay after inject (ms)</label>
+            <input id="delayAfterInject" class="input" type="number" min="0" step="100" placeholder="800" />
+          </div>
+        </div>
+
+
+
+        
+
         <div class="row">
           <button id="go" class="btn primary">
             <span id="goText">Connect</span>

@@ -1,3 +1,9 @@
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+
+
 async function fetchJson(url) {
   const r = await fetch(url, { method: "GET" });
   if (!r.ok) {
@@ -52,26 +58,58 @@ async function setOneCookie(serviceUrl, c, forcedDomain = null) {
   await chrome.cookies.set(details);
 }
 
-async function injectCookies(serviceUrl, cookies) {
-  for (const c of cookies) {
+// async function injectCookies(serviceUrl, cookies) {
+//   for (const c of cookies) {
+//     await setOneCookie(serviceUrl, c);
+
+//     // Optional: also set token cookie for .recolyse.com
+//     if (c.name === "token" && c.domain === "recolyse.com") {
+//       await setOneCookie(serviceUrl, c, ".recolyse.com");
+//     }
+
+//     if (!Array.isArray(cookies)) cookies = [];
+//     for (const c of cookies) {
+//       await setOneCookie(serviceUrl, c);
+
+//       // Optional: also set token cookie for .recolyse.com
+//       if (c.name === "token" && c.domain === "recolyse.com") {
+//         await setOneCookie(serviceUrl, c, ".recolyse.com");
+//     }
+//   }
+//   }
+// }
+
+
+async function injectCookies(serviceUrl, cookies, opts = {}) {
+  const delayBeforeMs = Number(opts.delayBeforeMs ?? 300);
+  const delayBetweenMs = Number(opts.delayBetweenMs ?? 120);
+  const delayAfterMs = Number(opts.delayAfterMs ?? 400);
+
+  const list = Array.isArray(cookies) ? cookies : [];
+
+  // small pause before starting
+  await sleep(delayBeforeMs);
+
+  for (const c of list) {
     await setOneCookie(serviceUrl, c);
 
-    // Optional: also set token cookie for .recolyse.com
+    // keep your recolyse special case if you need it
     if (c.name === "token" && c.domain === "recolyse.com") {
       await setOneCookie(serviceUrl, c, ".recolyse.com");
     }
 
-    if (!Array.isArray(cookies)) cookies = [];
-    for (const c of cookies) {
-      await setOneCookie(serviceUrl, c);
+    // pause between cookies
+    await sleep(delayBetweenMs);
+  }
 
-      // Optional: also set token cookie for .recolyse.com
-      if (c.name === "token" && c.domain === "recolyse.com") {
-        await setOneCookie(serviceUrl, c, ".recolyse.com");
-    }
-  }
-  }
+  // pause after all cookies are set
+  await sleep(delayAfterMs);
 }
+
+
+
+
+
 
 async function injectStorageAndReload(tabId, localStorageObj, sessionStorageObj) {
   await chrome.scripting.executeScript({
@@ -95,7 +133,11 @@ async function injectStorageAndReload(tabId, localStorageObj, sessionStorageObj)
   await chrome.tabs.reload(tabId);
 }
 
-async function doHandoff(handoffUrl) {
+async function doHandoff(handoffUrl, opts = {}) {
+
+  const delayBetweenCookies = Number(opts.delayBetweenCookies ?? 150);
+  const delayAfterInject = Number(opts.delayAfterInject ?? 800);
+
   const data = await fetchJson(handoffUrl);
 
   const serviceUrl = data.service_url;
@@ -109,10 +151,31 @@ async function doHandoff(handoffUrl) {
   const localStorageObj = safeParseJsonObject(data.localStorage);
   const sessionStorageObj = safeParseJsonObject(data.sessionStorage);
 
+
+  for (const c of cookies) {
+    await setOneCookie(serviceUrl, c);
+    await sleep(delayBetweenCookies);
+  }
+
+  await sleep(delayAfterInject);
+
+
+
   if (!serviceUrl) throw new Error("handoff response missing service_url");
 
   // Inject cookies first
-  await injectCookies(serviceUrl, cookies);
+  // await injectCookies(serviceUrl, cookies);
+
+
+  await injectCookies(serviceUrl, cookies, {
+    delayBeforeMs: 400,
+    delayBetweenMs: 150,
+    delayAfterMs: 600,
+  });
+
+
+  await sleep(600);
+
 
   // Open tab, inject storage, reload
   await new Promise((resolve) => {
@@ -128,7 +191,25 @@ async function doHandoff(handoffUrl) {
       }
     });
   });
+
+
+  const tab = await chrome.tabs.create({ url: currentUrl, active: true });
+
+
+
+
+
+  await sleep(500);
+
+  await injectStorageIntoTab(tab.id, localStorageObj, sessionStorageObj);
+
+  // reload to make site read cookies/storage
+  await chrome.tabs.reload(tab.id);
 }
+
+
+
+
 
 // Receive message from popup
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {

@@ -1,32 +1,19 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
-import urllib.parse
-
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
-
+import os
 import re
+import urllib.parse
+from typing import Any, Dict, Optional, Tuple
 
-
-import os  # <-- ADD THIS
-
-DEFAULT_TIMEOUT_MS = 30_000
-
-# 1 = headless (no visible browser window), 0 = visible browser (debug)
-HEADLESS = os.getenv("PLAYWRIGHT_HEADLESS", "1") == "1"
-
-
-
-
-
-
-
-
-
-
-
+from playwright.async_api import (
+    TimeoutError as PlaywrightTimeoutError,
+    async_playwright,
+)
 
 DEFAULT_TIMEOUT_MS = 30_000
+
+# Requested: always show browser window
+HEADLESS = False
 
 
 def _domain_from_url(url: str) -> str:
@@ -50,10 +37,9 @@ def _origin_from_url(url: str) -> str:
     return f"{scheme}://{netloc}".rstrip("/")
 
 
-async def _dump_storage(page) -> tuple[str | None, str | None]:
+async def _dump_storage(page) -> Tuple[str | None, str | None]:
     """
-    Returns (localStorageJSON_or_None, sessionStorageJSON_or_None)
-    for the CURRENT page origin.
+    Returns (localStorageJSON_or_None, sessionStorageJSON_or_None) for the CURRENT page origin.
     """
     local_storage = await page.evaluate(
         """() => {
@@ -84,16 +70,9 @@ async def _dump_storage(page) -> tuple[str | None, str | None]:
     return local_storage, session_storage
 
 
-
-
-
-
-
-#----------------------------------------------------------------------
-
-
 def _norm(s: str) -> str:
     return (s or "").strip().lower()
+
 
 async def _attr(locator, name: str) -> str:
     try:
@@ -102,33 +81,49 @@ async def _attr(locator, name: str) -> str:
     except Exception:
         return ""
 
+
 def _score_username(attrs: dict) -> int:
-    hay = " ".join([_norm(attrs.get(k, "")) for k in ["name","id","placeholder","autocomplete","type","aria"]])
+    hay = " ".join([_norm(attrs.get(k, "")) for k in ["name", "id", "placeholder", "autocomplete", "type", "aria"]])
     score = 0
-    if "email" in hay: score += 6
-    if "user" in hay or "username" in hay or "login" in hay: score += 5
-    if "phone" in hay or "tel" in hay: score -= 2
-    if attrs.get("type","") in ["email","text"]: score += 1
-    if attrs.get("autocomplete","") in ["email","username"]: score += 3
+    if "email" in hay:
+        score += 6
+    if "user" in hay or "username" in hay or "login" in hay:
+        score += 5
+    if "phone" in hay or "tel" in hay:
+        score -= 2
+    if attrs.get("type", "") in ["email", "text"]:
+        score += 1
+    if attrs.get("autocomplete", "") in ["email", "username"]:
+        score += 3
     return score
 
+
 def _score_password(attrs: dict) -> int:
-    hay = " ".join([_norm(attrs.get(k, "")) for k in ["name","id","placeholder","autocomplete","type","aria"]])
+    hay = " ".join([_norm(attrs.get(k, "")) for k in ["name", "id", "placeholder", "autocomplete", "type", "aria"]])
     score = 0
-    if attrs.get("type","") == "password": score += 10
-    if "password" in hay or "pass" in hay: score += 5
-    if attrs.get("autocomplete","") in ["current-password","new-password"]: score += 3
+    if attrs.get("type", "") == "password":
+        score += 10
+    if "password" in hay or "pass" in hay:
+        score += 5
+    if attrs.get("autocomplete", "") in ["current-password", "new-password"]:
+        score += 3
     return score
+
 
 def _score_submit(attrs: dict, text: str) -> int:
     t = _norm(text)
     hay = " ".join([_norm(attrs.get(k, "")), t])
     score = 0
-    if "sign in" in hay or "login" in hay or "connexion" in hay or "se connecter" in hay: score += 6
-    if "continue" in hay or "next" in hay: score += 2
-    if "submit" in _norm(attrs.get("type","")): score += 2
-    if "cancel" in hay or "register" in hay or "sign up" in hay: score -= 4
+    if "sign in" in hay or "login" in hay or "connexion" in hay or "se connecter" in hay:
+        score += 6
+    if "continue" in hay or "next" in hay:
+        score += 2
+    if "submit" in _norm(attrs.get("type", "")):
+        score += 2
+    if "cancel" in hay or "register" in hay or "sign up" in hay:
+        score -= 4
     return score
+
 
 async def _auto_find_login_controls(page):
     """
@@ -137,16 +132,14 @@ async def _auto_find_login_controls(page):
     """
     debug = {"candidates": {"username": [], "password": [], "submit": []}}
 
-    # password candidates
     pw = page.locator("input[type='password']")
     pw_count = await pw.count()
     if pw_count == 0:
         return None, None, None, {"reason": "no password inputs found"}
 
-    # choose first visible password input
     password_locator = None
     best_pw_score = -999
-    for i in range(min(pw_count, 20)):
+    for i in range(min(pw_count, 25)):
         loc = pw.nth(i)
         try:
             await loc.wait_for(state="visible", timeout=2000)
@@ -169,14 +162,12 @@ async def _auto_find_login_controls(page):
     if not password_locator:
         return None, None, None, {"reason": "no visible password input"}
 
-    # username/email: look for inputs near password (same form preferred)
-    # broad candidates
     user_inputs = page.locator("input:not([type='hidden']):not([type='password'])")
     user_count = await user_inputs.count()
 
     username_locator = None
     best_user_score = -999
-    for i in range(min(user_count, 40)):
+    for i in range(min(user_count, 60)):
         loc = user_inputs.nth(i)
         try:
             await loc.wait_for(state="visible", timeout=1200)
@@ -196,12 +187,11 @@ async def _auto_find_login_controls(page):
         except Exception:
             continue
 
-    # submit candidates
     submit_locator = None
     best_submit_score = -999
     buttons = page.locator("button, input[type='submit'], button[type='submit']")
     btn_count = await buttons.count()
-    for i in range(min(btn_count, 40)):
+    for i in range(min(btn_count, 60)):
         b = buttons.nth(i)
         try:
             await b.wait_for(state="visible", timeout=1200)
@@ -224,25 +214,42 @@ async def _auto_find_login_controls(page):
         except Exception:
             continue
 
-    # require at least password + a submit; username may be optional in some sites
     if not submit_locator:
         return username_locator, password_locator, None, {"reason": "no visible submit button", **debug}
 
     return username_locator, password_locator, submit_locator, debug
 
 
+async def _wait_for_cookie_readiness(
+    context,
+    service_url: str,
+    cookie_wait_name: Optional[str],
+    timeout_ms: int,
+) -> list[dict]:
+    """
+    Wait until cookies exist for target domain and (optionally) a cookie name exists.
+    Prevents extracting too early.
+    """
+    domain = _domain_from_url(service_url)
+    poll_ms = 250
+    elapsed = 0
 
+    while elapsed < timeout_ms:
+        cookies = await context.cookies()
+        has_domain_cookie = any((c.get("domain") or "").lstrip(".").endswith(domain) for c in cookies)
 
-#----------------------------------------------------------------------
+        has_named_cookie = True
+        if cookie_wait_name:
+            has_named_cookie = any(c.get("name") == cookie_wait_name for c in cookies)
 
+        if has_domain_cookie and has_named_cookie:
+            return cookies
 
+        await context.pages[0].wait_for_timeout(poll_ms) if getattr(context, "pages", None) else None
+        elapsed += poll_ms
 
-
-
-
-
-
-
+    # last attempt
+    return await context.cookies()
 
 
 
@@ -255,14 +262,22 @@ async def login_and_get_cookies(
     profile: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Headless login via Playwright. Returns:
-    - cookies
-    - localStorage
-    - sessionStorage
-    - current_url
-    - title
-    - used_selectors
-    - login_detected (best-effort)
+    Generic relay login with robust waits to avoid extracting cookies too early.
+    headless=False (browser visible).
+
+    profile options (all optional):
+      - pre_fill_wait_ms: int (default 1200)          # wait after goto before finding fields
+      - between_actions_wait_ms: int (default 250)    # small pauses between fill/click
+      - after_submit_wait_ms: int (default 2500)      # wait right after submit click
+      - post_login_timeout_ms: int (default 20000)    # total time to wait for "connected" state
+      - post_login_url_contains: str                  # best generic signal (e.g. "inventory.html")
+      - post_login_selector: str                      # selector visible only when logged in
+      - post_login_goto: str                          # explicit connected page to open after login
+      - stay_connected_ms: int (default 4000)         # keep page open a bit while cookies settle
+      - cookie_wait_name: str                         # wait for a specific cookie name
+      - cookie_min_count: int (default 1)             # require at least N cookies for the domain
+      - cookie_wait_timeout_ms: int (default 15000)   # polling time for cookie readiness
+      - username_selector/password_selector/submit_selector/open_login_selector/goto_wait_until: same as before
     """
     profile = profile or {}
 
@@ -277,296 +292,244 @@ async def login_and_get_cookies(
 
     username_selectors = _as_list(
         profile.get("username_selector"),
-        [
-            "input[type='email']",
-            "input[name='email']",
-            "input#email",
-            "input[name='username']",
-            "input[type='text']",
-        ],
+        ["input[type='email']", "input[name='email']", "input#email", "input[name='username']", "input[type='text']"],
     )
     password_selectors = _as_list(
         profile.get("password_selector"),
-        [
-            "input[type='password']",
-            "input[name='password']",
-            "input#password",
-        ],
+        ["input[type='password']", "input[name='password']", "input#password"],
     )
     submit_selectors = _as_list(
         profile.get("submit_selector"),
-        [
-            "button[type='submit']",
-            "input[type='submit']",
-            "button:has-text('Login')",
-            "button:has-text('Sign in')",
-            "button:has-text('Se connecter')",
-            "button:has-text('Connexion')",
-        ],
+        ["button[type='submit']", "input[type='submit']", "button:has-text('Login')", "button:has-text('Sign in')"],
     )
 
     open_login_selector = profile.get("open_login_selector")
-    post_login_wait_ms = int(profile.get("post_login_wait", 1500))
     goto_wait_until = profile.get("goto_wait_until", "domcontentloaded")
 
-    post_login_selector = profile.get("post_login_selector")
-    post_login_timeout_ms = int(profile.get("post_login_timeout_ms", 10_000))
+    pre_fill_wait_ms = int(profile.get("pre_fill_wait_ms", 1200))
+    between_actions_wait_ms = int(profile.get("between_actions_wait_ms", 250))
+    after_submit_wait_ms = int(profile.get("after_submit_wait_ms", 2500))
+
+    post_login_timeout_ms = int(profile.get("post_login_timeout_ms", 20_000))
     post_login_url_contains = profile.get("post_login_url_contains")
+    post_login_selector = profile.get("post_login_selector")
+    post_login_goto = profile.get("post_login_goto")
+
+    stay_connected_ms = int(profile.get("stay_connected_ms", 4000))
+
+    cookie_wait_name = profile.get("cookie_wait_name")
+    cookie_min_count = int(profile.get("cookie_min_count", 1))
+    cookie_wait_timeout_ms = int(profile.get("cookie_wait_timeout_ms", 15_000))
 
     used = {"username": None, "password": None, "submit": None}
-
     browser = None
     page = None
 
     try:
-        # Normalize incoming URL
         service_url = (service_url or "").strip()
         if not service_url:
             raise Exception("service_url is empty")
 
         if service_url.startswith("http://"):
-            service_url = "https://" + service_url[len("http://"):]
+            service_url = "https://" + service_url[len("http://") :]
 
         if not service_url.startswith(("http://", "https://")):
             service_url = "https://" + service_url
 
         origin = _origin_from_url(service_url)
+        domain = _domain_from_url(service_url)
 
         async with async_playwright() as p:
-            # Keep headless=False for debugging as requested
-            browser = await p.chromium.launch(headless=False)
-
-            # Use headless browser by default so no login tab/window shows up
-#             browser = await p.chromium.launch(
-#                 headless=HEADLESS,
-#                 args=[
-#                     "--disable-dev-shm-usage",
-#                     "--no-sandbox",
-#         ],
-# )
-
-
-
-
-
-
-
+            # Always visible
+            browser = await p.chromium.launch(
+                headless=False,
+                args=["--disable-dev-shm-usage", "--no-sandbox"],
+            )
             context = await browser.new_context()
             page = await context.new_page()
             page.set_default_timeout(DEFAULT_TIMEOUT_MS)
 
+            # 1) Go to login page and let it settle
             await page.goto(service_url, wait_until=goto_wait_until)
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+            except Exception:
+                pass
 
+            if pre_fill_wait_ms > 0:
+                await page.wait_for_timeout(pre_fill_wait_ms)
 
-            #--------------------------------------------------------------------------------------------
+            # Optional open login modal
+            if open_login_selector:
+                try:
+                    await page.locator(open_login_selector).first.click()
+                    await page.wait_for_timeout(between_actions_wait_ms)
+                except Exception:
+                    pass
 
+            before_url = page.url
 
-            # ---- Generic auto-detection (no per-site profile) ----
-            auto_user, auto_pw, auto_submit, auto_debug = await _auto_find_login_controls(page)
+            # 2) Auto-detect once (if your helper exists), otherwise fallback selectors
+            used_auto = False
+            try:
+                auto_user, auto_pw, auto_submit, auto_debug = await _auto_find_login_controls(page)
+            except Exception:
+                auto_user = auto_pw = auto_submit = None
+                auto_debug = {"reason": "auto detection failed"}
 
-            # If auto detection works, use it. Otherwise fallback to existing selector lists.
             if auto_pw is not None and auto_submit is not None:
-            # Fill username if we found one (some logins are password-only or multi-step)
+                used_auto = True
+
                 if auto_user is not None:
                     try:
+                        await auto_user.wait_for(state="visible", timeout=8000)
                         await auto_user.click(timeout=2000)
                         await auto_user.fill("")
+                        await page.wait_for_timeout(between_actions_wait_ms)
                         await auto_user.type(username, delay=35)
                         used["username"] = "auto-detect"
                     except Exception:
                         pass
 
-                # Fill password
+                await auto_pw.wait_for(state="visible", timeout=8000)
                 await auto_pw.click(timeout=2000)
                 await auto_pw.fill("")
+                await page.wait_for_timeout(between_actions_wait_ms)
                 await auto_pw.type(password, delay=35)
                 used["password"] = "auto-detect"
 
-                # Submit
                 try:
-                    await auto_submit.click(timeout=5000)
+                    await page.wait_for_timeout(between_actions_wait_ms)
+                    await auto_submit.click(timeout=8000)
                     used["submit"] = "auto-detect"
                 except Exception:
                     await auto_pw.press("Enter")
                     used["submit"] = "auto-detect:press-enter"
+
             else:
-                # Fallback to existing profile-based logic below
-                pass
-
-
-
-
-#--------------------------------------------------------------------------------------------
-
-            # Optional click to open login modal/page
-            if open_login_selector:
-                try:
-                    await page.locator(open_login_selector).first.click()
-                except Exception:
-                    pass
-
-            # Find username/email input and type
-            username_locator = None
-            for sel in username_selectors:
-                try:
-                    loc = page.locator(sel).first
-                    await loc.wait_for(state="visible", timeout=10_000)
-                    await loc.scroll_into_view_if_needed()
-                    await loc.click(timeout=2000)
-                    await loc.fill("")  # clear
-                    await loc.type(username, delay=35)  # human-like typing
-                    typed_value = await loc.input_value()
-                    if typed_value.strip() == username.strip():
-                        username_locator = loc
+                # Fallback: explicit selectors
+                username_locator = None
+                for sel in username_selectors:
+                    try:
+                        loc = page.locator(sel).first
+                        await loc.wait_for(state="visible", timeout=10_000)
+                        await loc.scroll_into_view_if_needed()
+                        await loc.click(timeout=2000)
+                        await loc.fill("")
+                        await page.wait_for_timeout(between_actions_wait_ms)
+                        await loc.type(username, delay=35)
                         used["username"] = sel
+                        username_locator = loc
                         break
-                except PlaywrightTimeoutError:
-                    continue
-                except Exception:
-                    continue
+                    except Exception:
+                        continue
 
-            if not username_locator:
-                raise Exception(
-                    "Cannot fill username/email input. Tried selectors: "
-                    + ", ".join(username_selectors)
-                    + f" | current_url={page.url} | page_title={await page.title()}"
-                )
+                if not username_locator:
+                    raise Exception("Cannot find/fill username field. Tried: " + ", ".join(username_selectors))
 
-            # Find password input and type
-            password_locator = None
-            for sel in password_selectors:
-                try:
-                    loc = page.locator(sel).first
-                    await loc.wait_for(state="visible", timeout=10_000)
-                    await loc.scroll_into_view_if_needed()
-                    await loc.click(timeout=2000)
-                    await loc.fill("")
-                    await loc.type(password, delay=35)
-                    typed_pw = await loc.input_value()
-                    if typed_pw:
-                        password_locator = loc
+                password_locator = None
+                for sel in password_selectors:
+                    try:
+                        loc = page.locator(sel).first
+                        await loc.wait_for(state="visible", timeout=10_000)
+                        await loc.scroll_into_view_if_needed()
+                        await loc.click(timeout=2000)
+                        await loc.fill("")
+                        await page.wait_for_timeout(between_actions_wait_ms)
+                        await loc.type(password, delay=35)
                         used["password"] = sel
+                        password_locator = loc
                         break
-                except PlaywrightTimeoutError:
-                    continue
-                except Exception:
-                    continue
+                    except Exception:
+                        continue
 
-            if not password_locator:
-                raise Exception("Cannot fill password input. Tried: " + ", ".join(password_selectors))
+                if not password_locator:
+                    raise Exception("Cannot find/fill password field. Tried: " + ", ".join(password_selectors))
 
-            # Submit
-            clicked = False
-            for sel in submit_selectors:
-                try:
-                    btn = page.locator(sel).first
-                    await btn.wait_for(state="visible", timeout=5_000)
-                    await btn.click()
-                    used["submit"] = sel
-                    clicked = True
-                    break
-                except PlaywrightTimeoutError:
-                    continue
-                except Exception:
-                    continue
+                clicked = False
+                for sel in submit_selectors:
+                    try:
+                        btn = page.locator(sel).first
+                        await btn.wait_for(state="visible", timeout=8_000)
+                        await page.wait_for_timeout(between_actions_wait_ms)
+                        await btn.click()
+                        used["submit"] = sel
+                        clicked = True
+                        break
+                    except Exception:
+                        continue
 
-            if not clicked:
-                await password_locator.press("Enter")
-                used["submit"] = "press:Enter"
+                if not clicked:
+                    await password_locator.press("Enter")
+                    used["submit"] = "press:Enter"
 
-            # SPA-friendly settle
+            # 3) After submit: give time for redirect + SPA routing
+            if after_submit_wait_ms > 0:
+                await page.wait_for_timeout(after_submit_wait_ms)
+
+            # Try to settle network (don't fail hard if SPA keeps sockets open)
             try:
-                await page.wait_for_load_state("domcontentloaded", timeout=5_000)
-            except PlaywrightTimeoutError:
+                await page.wait_for_load_state("networkidle", timeout=10_000)
+            except Exception:
                 pass
 
-            if post_login_wait_ms > 0:
-                await page.wait_for_timeout(post_login_wait_ms)
-
-            # Detect login (best effort)
+            # 4) Wait for "connected" proof (URL contains or selector), best-effort
             login_detected = False
 
-            if post_login_selector:
-                try:
-                    await page.locator(post_login_selector).first.wait_for(
-                        state="visible",
-                        timeout=post_login_timeout_ms,
-                    )
-                    login_detected = True
-                except PlaywrightTimeoutError:
-                    login_detected = False
-
-            if (not login_detected) and post_login_url_contains:
+            if post_login_url_contains:
                 try:
                     await page.wait_for_url(f"**{post_login_url_contains}**", timeout=post_login_timeout_ms)
                     login_detected = True
-                except PlaywrightTimeoutError:
+                except Exception:
                     pass
 
-            # IMPORTANT: move to target origin so storage is read from correct origin
-            try:
-                await page.goto(origin + "/", wait_until="domcontentloaded")
-                await page.wait_for_timeout(1500)
-            except Exception:
-                pass
+            if (not login_detected) and post_login_selector:
+                try:
+                    await page.locator(post_login_selector).first.wait_for(state="visible", timeout=post_login_timeout_ms)
+                    login_detected = True
+                except Exception:
+                    pass
 
+            # 5) Optional explicit connected page navigation (VERY effective for sites like saucedemo)
+            if post_login_goto:
+                try:
+                    await page.goto(post_login_goto, wait_until="domcontentloaded")
+                    await page.wait_for_timeout(800)
+                    login_detected = True
+                except Exception:
+                    pass
 
+            # 6) Stay connected a bit so cookies/storage fully settle BEFORE extraction
+            if stay_connected_ms > 0:
+                await page.wait_for_timeout(stay_connected_ms)
 
-            # After submit:
-            await page.wait_for_load_state("networkidle", timeout=15000)
+            # 7) Cookie readiness polling loop (avoid extracting too early)
+            cookies = []
+            poll_ms = 250
+            elapsed = 0
+            while elapsed < cookie_wait_timeout_ms:
+                cookies = await context.cookies()
 
-            # Best-effort: wait a bit for redirects/spa navigation
-            await page.wait_for_timeout(1500)
+                domain_cookies = [
+                    c for c in cookies
+                    if (c.get("domain") or "").lstrip(".").endswith(domain)
+                ]
+                ok_count = len(domain_cookies) >= cookie_min_count
 
-            # Optional: if still on login page, wait a bit more
-            cur = page.url.lower()
-            if "login" in cur or "signin" in cur:
-                await page.wait_for_timeout(2000)
+                ok_name = True
+                if cookie_wait_name:
+                    ok_name = any(c.get("name") == cookie_wait_name for c in domain_cookies)
 
+                if ok_count and ok_name:
+                    break
 
+                await page.wait_for_timeout(poll_ms)
+                elapsed += poll_ms
 
-            # After login is considered successful (or after submit + wait)
-            DEMO_PAUSE_MS = int(os.getenv("PLAYWRIGHT_DEMO_PAUSE_MS", "0"))
-            if DEMO_PAUSE_MS > 0:
-                await page.wait_for_timeout(DEMO_PAUSE_MS)
+            # One last tiny settle
+            await page.wait_for_timeout(300)
 
-
-
-            # Capture all cookies known to this context (server-side auth state)
-            cookies = await context.cookies()
-
-            # Wait for SPA to write storage (token OR persist:root)
-            has_storage = True
-            try:
-                await page.wait_for_function(
-                    """() => {
-                      try {
-                        return !!localStorage.getItem("token") || !!localStorage.getItem("persist:root");
-                      } catch (e) { return false; }
-                    }""",
-                    timeout=20_000,
-                )
-            except Exception:
-                has_storage = False
-
-            # Fallback: if SPA didn't write storage, seed localStorage.token from cookie token
-            if not has_storage:
-                jwt_token = next((c.get("value") for c in cookies if c.get("name") == "token"), None)
-                if jwt_token:
-                    try:
-                        await page.evaluate(
-                            """(t) => {
-                              try { localStorage.setItem("token", t); } catch(e) {}
-                            }""",
-                            jwt_token,
-                        )
-                        await page.wait_for_timeout(300)
-                        await page.reload(wait_until="domcontentloaded")
-                        await page.wait_for_timeout(1200)
-                    except Exception:
-                        pass
-
-            # Final dump (after waits/fallback)
+            # 8) Dump storage AFTER cookies are ready
             local_storage, session_storage = await _dump_storage(page)
 
             return {
@@ -577,8 +540,16 @@ async def login_and_get_cookies(
                 "title": await page.title(),
                 "used_selectors": used,
                 "login_detected": login_detected,
-                "domain": _domain_from_url(service_url),
+                "domain": domain,
                 "origin": origin,
+                "debug": {
+                    "before_url": before_url,
+                    "after_url": page.url,
+                    "used_auto_detect": used_auto,
+                    "auto_debug": auto_debug if used_auto else None,
+                    "cookie_wait_elapsed_ms": elapsed,
+                    "domain_cookie_count": len([c for c in cookies if (c.get("domain") or "").lstrip(".").endswith(domain)]),
+                },
             }
 
     except Exception as e:
@@ -590,811 +561,6 @@ async def login_and_get_cookies(
                 await browser.close()
         except Exception:
             pass
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# from __future__ import annotations
-
-# from typing import Any, Dict, Optional
-# import urllib.parse
-
-# from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
-# from urllib.parse import urlsplit
-
-
-# DEFAULT_TIMEOUT_MS = 30_000
-
-
-# def _domain_from_url(url: str) -> str:
-#     try:
-#         d = urllib.parse.urlparse(url).netloc
-#         return d.split(":")[0].lower().strip()
-#     except Exception:
-#         return ""
-
-
-# async def _dump_storage(page) -> tuple[str | None, str | None]:
-#     """Extract localStorage and sessionStorage from the page."""
-#     local_storage = await page.evaluate(
-#         """() => {
-#           try {
-#             const o = {};
-#             for (let i = 0; i < window.localStorage.length; i++) {
-#               const k = window.localStorage.key(i);
-#               o[k] = window.localStorage.getItem(k);
-#             }
-#             const s = JSON.stringify(o);
-#             return s === "{}" ? null : s;
-#           } catch (e) { return null; }
-#         }"""
-#     )
-#     session_storage = await page.evaluate(
-#         """() => {
-#           try {
-#             const o = {};
-#             for (let i = 0; i < window.sessionStorage.length; i++) {
-#               const k = window.sessionStorage.key(i);
-#               o[k] = window.sessionStorage.getItem(k);
-#             }
-#             const s = JSON.stringify(o);
-#             return s === "{}" ? null : s;
-#           } catch (e) { return null; }
-#         }"""
-#     )
-#     return local_storage, session_storage
-
-
-# async def _dump_storage_with_retry(page, max_retries: int = 3, retry_delay_ms: int = 2000) -> tuple[str | None, str | None]:
-#     """Extract storage with retries to allow async initialization."""
-#     for attempt in range(max_retries):
-#         local_storage, session_storage = await _dump_storage(page)
-        
-#         # If we got data, return it
-#         if local_storage or session_storage:
-#             print(f"✅ Storage dumped on attempt {attempt + 1}")
-#             return local_storage, session_storage
-        
-#         # If last attempt, return whatever we have (nulls)
-#         if attempt == max_retries - 1:
-#             print(f"⚠️ Storage is empty after {max_retries} attempts")
-#             return local_storage, session_storage
-        
-#         # Wait and retry
-#         print(f"⏳ Storage empty, retrying in {retry_delay_ms}ms... (attempt {attempt + 1}/{max_retries})")
-#         await page.wait_for_timeout(retry_delay_ms)
-    
-#     return None, None
-
-
-# async def login_and_get_cookies(
-#     service_url: str,
-#     username: str,
-#     password: str,
-#     profile: Optional[Dict[str, Any]] = None,
-# ) -> Dict[str, Any]:
-#     """
-#     Headless login via Playwright. Returns:
-#     - cookies
-#     - localStorage
-#     - sessionStorage
-#     - current_url
-#     - title
-#     - used_selectors
-#     """
-#     profile = profile or {}
-
-#     def _as_list(x, default_list):
-#         if not x:
-#             return default_list
-#         if isinstance(x, str):
-#             return [x]
-#         if isinstance(x, list):
-#             return x
-#         return default_list
-
-#     username_selectors = _as_list(
-#         profile.get("username_selector"),
-#         [
-#             "input[type='email']",
-#             "input[name='email']",
-#             "input#email",
-#             "input[name='username']",
-#             "input[type='text']",
-#         ],
-#     )
-#     password_selectors = _as_list(
-#         profile.get("password_selector"),
-#         [
-#             "input[type='password']",
-#             "input[name='password']",
-#             "input#password",
-#         ],
-#     )
-#     submit_selectors = _as_list(
-#         profile.get("submit_selector"),
-#         [
-#             "button[type='submit']",
-#             "input[type='submit']",
-#             "button:has-text('Login')",
-#             "button:has-text('Sign in')",
-#             "button:has-text('Se connecter')",
-#             "button:has-text('Connexion')",
-#         ],
-#     )
-
-#     open_login_selector = profile.get("open_login_selector")
-#     post_login_wait_ms = int(profile.get("post_login_wait", 1500))
-#     goto_wait_until = profile.get("goto_wait_until", "domcontentloaded")
-
-#     post_login_selector = profile.get("post_login_selector")
-#     post_login_timeout_ms = int(profile.get("post_login_timeout_ms", 10_000))
-#     post_login_url_contains = profile.get("post_login_url_contains")
-
-#     used = {"username": None, "password": None, "submit": None}
-
-#     browser = None
-#     context = None
-#     page = None
-
-#     try:
-#         async with async_playwright() as p:
-#             browser = await p.chromium.launch(headless=False)
-#             context = await browser.new_context()
-#             page = await context.new_page()
-#             page.set_default_timeout(DEFAULT_TIMEOUT_MS)
-
-#             if service_url.startswith("http://"):
-#                 service_url = "https://" + service_url[len("http://"):]
-#             await page.goto(service_url, wait_until=goto_wait_until)
-
-#             # Optional click to open login modal/page
-#             if open_login_selector:
-#                 try:
-#                     await page.locator(open_login_selector).first.click()
-#                 except Exception:
-#                     pass
-
-#             # Find username/email input
-#             username_locator = None
-#             for sel in username_selectors:
-#                 try:
-#                     loc = page.locator(sel).first
-#                     await loc.wait_for(state="visible", timeout=10_000)
-#                     username_locator = loc
-#                     used["username"] = sel
-#                     break
-#                 except PlaywrightTimeoutError:
-#                     continue
-
-#             if not username_locator:
-#                 raise Exception("Cannot find username/email input. Tried: " + ", ".join(username_selectors))
-
-#             # Find password input
-#             password_locator = None
-#             for sel in password_selectors:
-#                 try:
-#                     loc = page.locator(sel).first
-#                     await loc.wait_for(state="visible", timeout=10_000)
-#                     password_locator = loc
-#                     used["password"] = sel
-#                     break
-#                 except PlaywrightTimeoutError:
-#                     continue
-
-#             if not password_locator:
-#                 raise Exception("Cannot find password input. Tried: " + ", ".join(password_selectors))
-
-#             await username_locator.fill(username)
-#             await password_locator.fill(password)
-
-#             # Submit
-#             clicked = False
-#             for sel in submit_selectors:
-#                 try:
-#                     btn = page.locator(sel).first
-#                     await btn.wait_for(state="visible", timeout=5_000)
-#                     await btn.click()
-#                     used["submit"] = sel
-#                     clicked = True
-#                     break
-#                 except PlaywrightTimeoutError:
-#                     continue
-#                 except Exception:
-#                     continue
-
-#             if not clicked:
-#                 await password_locator.press("Enter")
-#                 used["submit"] = "press:Enter"
-
-#             # SPA-friendly settle (avoid networkidle)
-#             try:
-#                 await page.wait_for_load_state("domcontentloaded", timeout=5_000)
-#             except PlaywrightTimeoutError:
-#                 pass
-
-#             if post_login_wait_ms > 0:
-#                 await page.wait_for_timeout(post_login_wait_ms)
-
-#             # Detect login (best effort)
-#             login_detected = False
-
-#             if post_login_selector:
-#                 try:
-#                     await page.locator(post_login_selector).first.wait_for(
-#                         state="visible", timeout=post_login_timeout_ms
-#                     )
-#                     login_detected = True
-#                 except PlaywrightTimeoutError:
-#                     login_detected = False
-
-#             if (not login_detected) and post_login_url_contains:
-#                 try:
-#                     await page.wait_for_url(f"**{post_login_url_contains}**", timeout=post_login_timeout_ms)
-#                     login_detected = True
-#                 except PlaywrightTimeoutError:
-#                     pass
-
-#             # Force-load the home page so the SPA initializes with cookies
-#             try:
-#                 await page.goto("https://recolyse.com/", wait_until="domcontentloaded")
-#                 await page.wait_for_timeout(2500)
-#             except Exception:
-#                 pass
-
-#             try:
-#                 await page.goto("https://recolyse.com/", wait_until="domcontentloaded")
-#                 await page.wait_for_timeout(3000)
-#             except Exception:
-#                 pass
-
-
-
-
-
-
-#             cookies = await context.cookies()
-
-#             # If site uses localStorage token (Recolyse does), seed it from cookie token
-#             try:
-#                 jwt_token = None
-#                 for c in cookies:
-#                     if c.get("name") == "token" and c.get("value"):
-#                         jwt_token = c["value"]
-#                         break
-
-#                 if jwt_token:
-#                     # Make sure we are on correct origin
-#                     await page.goto("https://recolyse.com/", wait_until="domcontentloaded")
-#                     await page.wait_for_timeout(1000)
-
-#                     # Inject token into localStorage
-#                     await page.evaluate(
-#                         """(t) => {
-#                         try {
-#                             window.localStorage.setItem("token", t);
-#                         } catch (e) {}
-#                     }""",
-#                         jwt_token,
-#                     )
-
-#                     # Let the SPA read storage and settle
-#                     await page.reload(wait_until="domcontentloaded")
-#                     await page.wait_for_timeout(2000)
-#             except Exception as e:
-#                 print(f"⚠️ Error injecting token to localStorage: {e}")
-
-#             # Extract storage with retries to allow async initialization
-#             local_storage, session_storage = await _dump_storage_with_retry(page, max_retries=4, retry_delay_ms=2000)
-
-#             return {
-#                 "cookies": cookies,
-#                 "localStorage": local_storage,
-#                 "sessionStorage": session_storage,
-#                 "current_url": page.url,
-#                 "title": await page.title(),
-#                 "used_selectors": used,
-#             }
-
-#     except Exception as e:
-#         raise Exception(f"Playwright login failed: {str(e)}")
-
-#     finally:
-#         # Close safely
-#         try:
-#             if browser is not None:
-#                 await browser.close()
-#         except Exception:
-#             pass
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# from __future__ import annotations
-
-# from typing import Any, Dict, Optional
-# import urllib.parse
-
-# from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
-
-
-# DEFAULT_TIMEOUT_MS = 30_000
-
-
-# def _domain_from_url(url: str) -> str:
-#     try:
-#         d = urllib.parse.urlparse(url).netloc
-#         return d.split(":")[0].lower().strip()
-#     except Exception:
-#         return ""
-    
-
-
-# async def _dump_web_storage(page) -> tuple[str | None, str | None]:
-#     """
-#     Returns (localStorageJSON, sessionStorageJSON) for the current origin.
-#     Uses page.evaluate in the page context.
-#     """
-#     local_storage = await page.evaluate(
-#         """() => {
-#           try {
-#             const o = {};
-#             for (let i = 0; i < window.localStorage.length; i++) {
-#               const k = window.localStorage.key(i);
-#               o[k] = window.localStorage.getItem(k);
-#             }
-#             return JSON.stringify(o);
-#           } catch (e) {
-#             return null;
-#           }
-#         }"""
-#     )
-#     session_storage = await page.evaluate(
-#         """() => {
-#           try {
-#             const o = {};
-#             for (let i = 0; i < window.sessionStorage.length; i++) {
-#               const k = window.sessionStorage.key(i);
-#               o[k] = window.sessionStorage.getItem(k);
-#             }
-#             return JSON.stringify(o);
-#           } catch (e) {
-#             return null;
-#           }
-#         }"""
-#     )
-#     if local_storage == "{}":
-#         local_storage = None
-#     if session_storage == "{}":
-#         session_storage = None
-#     return local_storage, session_storage
-
-
-
-# async def _dump_storage(page) -> tuple[str | None, str | None]:
-#     local_storage = await page.evaluate(
-#         """() => {
-#           try {
-#             const o = {};
-#             for (let i = 0; i < window.localStorage.length; i++) {
-#               const k = window.localStorage.key(i);
-#               o[k] = window.localStorage.getItem(k);
-#             }
-#             const s = JSON.stringify(o);
-#             return s === "{}" ? null : s;
-#           } catch (e) { return null; }
-#         }"""
-#     )
-#     session_storage = await page.evaluate(
-#         """() => {
-#           try {
-#             const o = {};
-#             for (let i = 0; i < window.sessionStorage.length; i++) {
-#               const k = window.sessionStorage.key(i);
-#               o[k] = window.sessionStorage.getItem(k);
-#             }
-#             const s = JSON.stringify(o);
-#             return s === "{}" ? null : s;
-#           } catch (e) { return null; }
-#         }"""
-#     )
-#     return local_storage, session_storage
-
-
-
-
-
-
-
-
-
-
-
-
-
-# async def login_and_get_cookies(
-#     service_url: str,
-#     username: str,
-#     password: str,
-#     profile: Optional[Dict[str, Any]] = None,
-# ) -> Dict[str, Any]:
-#     """
-#     Headless login via Playwright. Returns:
-#     - cookies
-#     - current_url
-#     - title
-#     - used_selectors
-#     - login_detected
-#     """
-#     profile = profile or {}
-
-#     def _as_list(x, default_list):
-#         if not x:
-#             return default_list
-#         if isinstance(x, str):
-#             return [x]
-#         if isinstance(x, list):
-#             return x
-#         return default_list
-
-#     username_selectors = _as_list(
-#         profile.get("username_selector"),
-#         [
-#             "input[type='email']",
-#             "input[name='email']",
-#             "input#email",
-#             "input[name='username']",
-#             "input[type='text']",
-#         ],
-#     )
-#     password_selectors = _as_list(
-#         profile.get("password_selector"),
-#         [
-#             "input[type='password']",
-#             "input[name='password']",
-#             "input#password",
-#         ],
-#     )
-#     submit_selectors = _as_list(
-#         profile.get("submit_selector"),
-#         [
-#             "button[type='submit']",
-#             "input[type='submit']",
-#             "button:has-text('Login')",
-#             "button:has-text('Sign in')",
-#             "button:has-text('Se connecter')",
-#             "button:has-text('Connexion')",
-#         ],
-#     )
-
-#     open_login_selector = profile.get("open_login_selector")
-#     post_login_wait_ms = int(profile.get("post_login_wait", 1500))
-#     goto_wait_until = profile.get("goto_wait_until", "domcontentloaded")
-
-#     post_login_selector = profile.get("post_login_selector")
-#     post_login_timeout_ms = int(profile.get("post_login_timeout_ms", 10_000))
-#     post_login_url_contains = profile.get("post_login_url_contains")
-
-#     used = {"username": None, "password": None, "submit": None}
-
-#     browser = None
-#     context = None
-#     page = None
-
-#     try:
-#         async with async_playwright() as p:
-#             browser = await p.chromium.launch(headless=False)
-#             context = await browser.new_context()
-#             page = await context.new_page()
-#             page.set_default_timeout(DEFAULT_TIMEOUT_MS)
-
-
-#             if service_url.startswith("http://"):
-#                 service_url = "https://" + service_url[len("http://"):]
-#             await page.goto(service_url, wait_until=goto_wait_until)
-
-#             # Optional click to open login modal/page
-#             if open_login_selector:
-#                 try:
-#                     await page.locator(open_login_selector).first.click()
-#                 except Exception:
-#                     pass
-
-#             # Find username/email input
-#             username_locator = None
-#             for sel in username_selectors:
-#                 try:
-#                     loc = page.locator(sel).first
-#                     await loc.wait_for(state="visible", timeout=10_000)
-#                     username_locator = loc
-#                     used["username"] = sel
-#                     break
-#                 except PlaywrightTimeoutError:
-#                     continue
-
-#             if not username_locator:
-#                 raise Exception("Cannot find username/email input. Tried: " + ", ".join(username_selectors))
-
-#             # Find password input
-#             password_locator = None
-#             for sel in password_selectors:
-#                 try:
-#                     loc = page.locator(sel).first
-#                     await loc.wait_for(state="visible", timeout=10_000)
-#                     password_locator = loc
-#                     used["password"] = sel
-#                     break
-#                 except PlaywrightTimeoutError:
-#                     continue
-
-#             if not password_locator:
-#                 raise Exception("Cannot find password input. Tried: " + ", ".join(password_selectors))
-
-#             await username_locator.fill(username)
-#             await password_locator.fill(password)
-
-#             # Submit
-#             clicked = False
-#             for sel in submit_selectors:
-#                 try:
-#                     btn = page.locator(sel).first
-#                     await btn.wait_for(state="visible", timeout=5_000)
-#                     await btn.click()
-#                     used["submit"] = sel
-#                     clicked = True
-#                     break
-#                 except PlaywrightTimeoutError:
-#                     continue
-#                 except Exception:
-#                     continue
-
-#             if not clicked:
-#                 await password_locator.press("Enter")
-#                 used["submit"] = "press:Enter"
-
-#             # SPA-friendly settle (avoid networkidle)
-#             try:
-#                 await page.wait_for_load_state("domcontentloaded", timeout=5_000)
-#             except PlaywrightTimeoutError:
-#                 pass
-
-#             if post_login_wait_ms > 0:
-#                 await page.wait_for_timeout(post_login_wait_ms)
-
-#             # Detect login (best effort)
-#             login_detected = False
-
-#             if post_login_selector:
-#                 try:
-#                     await page.locator(post_login_selector).first.wait_for(
-#                         state="visible", timeout=post_login_timeout_ms
-#                     )
-#                     login_detected = True
-#                 except PlaywrightTimeoutError:
-#                     login_detected = False
-
-#             if (not login_detected) and post_login_url_contains:
-#                 try:
-#                     await page.wait_for_url(f"**{post_login_url_contains}**", timeout=post_login_timeout_ms)
-#                     login_detected = True
-#                 except PlaywrightTimeoutError:
-#                     pass
-
-
-#             # After submitting, force-load the home page so the SPA initializes with cookies
-#             try:
-#                 await page.goto("https://recolyse.com/", wait_until="domcontentloaded")
-#                 # give the app time to run JS and potentially populate storage / render logged-in UI
-#                 await page.wait_for_timeout(2500)
-#             except Exception:
-#                 pass
-
-
-#             # ✅ IMPORTANT: load home so SPA writes persist:root/token/user into localStorage
-#             try:
-#                 await page.goto("https://recolyse.com/", wait_until="domcontentloaded")
-#                 await page.wait_for_timeout(3000)
-#             except Exception:
-#                 pass
-
-#             cookies = await context.cookies()
-
-
-
-#             # If site uses localStorage token (Recolyse does), seed it from cookie token
-#             try:
-#                 jwt_token = None
-#                 for c in cookies:
-#                     if c.get("name") == "token" and c.get("value"):
-#                         jwt_token = c["value"]
-#                         break
-
-#                 if jwt_token:
-#         # Make sure we are on correct origin
-#                     await page.goto("https://recolyse.com/", wait_until="domcontentloaded")
-#                     await page.wait_for_timeout(1000)
-
-#                     await page.evaluate(
-#                         """(t) => {
-#                         try {
-#                             window.localStorage.setItem("token", t);
-#                         } catch (e) {}
-#                     }""",
-#                     jwt_token,
-#         )
-
-#         # Let the SPA read storage and settle
-#                     await page.reload(wait_until="domcontentloaded")
-#                     await page.wait_for_timeout(1500)
-#             except Exception:
-#                 pass
-
-#             local_storage, session_storage = await _dump_storage(page)
-
-#             return {
-#                 "cookies": cookies,
-#                 "localStorage": local_storage,
-#                 "sessionStorage": session_storage,
-#                 "current_url": page.url,
-#                 "title": await page.title(),
-#                 "used_selectors": used,
-#             }# ✅ IMPORTANT: load home so SPA writes persist:root/token/user into localStorage
-
-
-
-
-            
-
-#             # cookies = await context.cookies()
-
-#             # local_storage = await page.evaluate("() => JSON.stringify(window.localStorage)")
-
-#             # return {
-#             #     "cookies": cookies,
-#             #     "localStorage": local_storage if local_storage != "{}" else None,
-#             #     "current_url": page.url if page else service_url,
-#             #     "title": (await page.title()) if page else "",
-#             #     "used_selectors": used,
-#             #     "domain": _domain_from_url(service_url),
-#             #     "login_detected": login_detected,
-#             # }
-
-
-#             # session_storage = await page.evaluate("() => JSON.stringify(window.sessionStorage)")
-
-
-# #             cookies = await context.cookies()
-
-# # # ✅ ensure we are on the correct origin before dumping storage
-# # # Some sites set storage only after redirect; visit homepage once after login.
-# #             try:
-# #                 await page.goto("https://recolyse.com/", wait_until="domcontentloaded")
-# #             except Exception:
-# #                 pass
-
-# #             local_storage, session_storage = await _dump_web_storage(page)
-
-# #             if "/login" in page.url:
-# #                 raise Exception("Login did not stick (still on /login after submit).")
-
-
-
-
-
-
-# #             return {
-# #                 "cookies": cookies,
-# #                 "localStorage": local_storage,
-# #                 "sessionStorage": session_storage,
-# #                 "current_url": page.url,
-# #                 "title": await page.title(),
-# #                 "used_selectors": used,
-# #                 "login_detected": login_detected,
-# #             }
-
-
-
-
-
-#     except Exception as e:
-#         # NEVER reference page/context/browser if they were not created
-#         raise Exception(f"Playwright login failed: {str(e)}")
-
-#     finally:
-#         # Close safely
-#         try:
-#             if browser is not None:
-#                 await browser.close()
-#         except Exception:
-#             pass
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

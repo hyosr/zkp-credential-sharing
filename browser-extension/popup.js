@@ -38,8 +38,27 @@ document.addEventListener("DOMContentLoaded", async () => {
   const spinner = document.getElementById("spinner");
   const goText = document.getElementById("goText");
 
-  const saved = await chrome.storage.local.get(["handoffUrl", "baseUrl"]);
+  // const saved = await chrome.storage.local.get(["handoffUrl", "baseUrl"]);
+  
+  const saved = await chrome.storage.local.get([
+    "handoffUrl",
+    "baseUrl",
+    "delayBetweenCookies",
+    "delayAfterInject",
+  ]);
+
+
   baseUrlEl.value = saved.baseUrl || DEFAULT_BASE;
+
+
+  const delayBetweenCookiesEl = document.getElementById("delayBetweenCookies");
+  const delayAfterInjectEl = document.getElementById("delayAfterInject");
+
+  delayBetweenCookiesEl.value = saved.delayBetweenCookies ?? 150;
+  delayAfterInjectEl.value = saved.delayAfterInject ?? 800;
+
+
+
 
   if (saved.handoffUrl) {
     const m = saved.handoffUrl.match(/\/sharing\/handoff\/([^/?#]+)/);
@@ -50,6 +69,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     const baseUrl = normalizeBaseUrl(baseUrlEl.value);
     const handoffUrl = normalizeToHandoffUrl(baseUrl, tokenEl.value);
 
+    const opts = {
+      delayBetweenCookies: Number(delayBetweenCookiesEl.value || 0),
+      delayAfterInject: Number(delayAfterInjectEl.value || 0),
+    };
+
+
+
     if (!handoffUrl) {
       setStatus(statusEl, "Paste a token/session_id or a full handoff URL.", "err");
       return;
@@ -58,10 +84,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     setLoading(goBtn, spinner, goText, true);
     setStatus(statusEl, "");
 
-    await chrome.storage.local.set({ handoffUrl, baseUrl });
+    // await chrome.storage.local.set({ handoffUrl, baseUrl });
 
-    chrome.runtime.sendMessage({ type: "RUN_HANDOFF", handoffUrl }, (resp) => {
-      setLoading(goBtn, spinner, goText, false);
+
+    await chrome.storage.local.set({ handoffUrl, baseUrl, ...opts });
+
+    chrome.runtime.sendMessage({ type: "RUN_HANDOFF", handoffUrl, opts }, (resp) => {      setLoading(goBtn, spinner, goText, false);
 
       if (chrome.runtime.lastError) {
         setStatus(statusEl, "Error: " + chrome.runtime.lastError.message, "err");
