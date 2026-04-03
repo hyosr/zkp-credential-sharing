@@ -450,7 +450,8 @@ def main():
         "🤝 Share",
         "📩 Access a Share",
         "🚪 Relay Login (no password reveal)",
-        "🔐 Keycloak Passwordless Share (Device Flow)",
+        "🧩 Assisted Login (CAPTCHA/2FA supported)",
+        # "🔐 Keycloak Passwordless Share (Device Flow)",
         "📋 Audit Trail",
         "ℹ️ About ZKP",
     ]
@@ -482,6 +483,9 @@ def main():
         page_relay_login()
     elif menu == "🔐 Keycloak Passwordless Share (Device Flow)":
         page_keycloak_device_flow()
+    elif menu == "🧩 Assisted Login (CAPTCHA/2FA supported)":
+        page_assisted_login()
+
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -819,6 +823,125 @@ def page_login():
 
 
 
+
+
+def page_assisted_login():
+    st.title("🧩 Assisted Login (Owner approval — CAPTCHA/2FA supported)")
+    st.markdown(
+        """
+This mode avoids browser cookie injection between users.
+The **owner** completes the CAPTCHA/2FA on **your site**, then the backend issues a short‑lived **handoff_token**.
+The recipient opens `/handoff` to create a first‑party session cookie.
+        """
+    )
+
+    token = st.session_state.get("jwt_token")
+    if not token:
+        st.error("You must be logged in (JWT ZKP) to use Assisted Login.")
+        return
+
+    st.markdown("---")
+    st.subheader("Recipient — Request owner approval")
+
+    with st.form("assisted_request_form"):
+        share_token = st.text_input("🔑 Share token (received from owner)")
+        # Optional: if your backend can infer service_url from the credential, you don't need override.
+        service_url_override = st.text_input(
+            "Service URL override (optional)",
+            help="Only needed if backend can't infer target URL from the shared credential.",
+            value="",
+        )
+        submitted = st.form_submit_button("📨 Request assisted login", use_container_width=True)
+
+    if submitted:
+        if not share_token.strip():
+            st.warning("Paste the share token.")
+            return
+
+        payload = {"token": share_token.strip()}
+        if service_url_override.strip():
+            payload["service_url_override"] = service_url_override.strip()
+
+        with st.spinner("Creating assisted request..."):
+            r = api_post_strict("/sharing/assisted/request", payload, token=token, timeout=30)
+
+        if r.get("error"):
+            st.error(f"Request failed: {r.get('detail')}")
+            return
+
+        st.session_state["assisted_request_id"] = r.get("request_id")
+        st.session_state["assisted_expires_at"] = r.get("expires_at")
+        st.session_state["assisted_service_url"] = r.get("service_url")
+        st.success(f"✅ Request created: {st.session_state['assisted_request_id']}")
+        st.info("Now wait for owner approval. This page will poll status.")
+
+    rid = st.session_state.get("assisted_request_id")
+    if not rid:
+        st.markdown("---")
+        st.caption("No active request yet.")
+        return
+
+    st.markdown("---")
+    st.subheader("Status")
+    st.write("Request ID:", rid)
+    st.write("Service URL:", st.session_state.get("assisted_service_url"))
+    exp = st.session_state.get("assisted_expires_at")
+    if exp:
+        st.caption("Expires at: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(exp)))
+
+    colA, colB, colC = st.columns([1, 1, 1], gap="small")
+    poll_now = colA.button("🔄 Poll now", use_container_width=True)
+    auto_poll = colB.toggle("Auto-poll (2s)", value=True)
+    clear_req = colC.button("🧹 Clear", use_container_width=True)
+
+    if clear_req:
+        for k in ["assisted_request_id", "assisted_expires_at", "assisted_service_url"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+
+    # Poll logic
+    def poll_status_once():
+        return api_get_strict(f"/sharing/assisted/{rid}/status", token=token, timeout=20)
+
+    status_box = st.empty()
+    actions_box = st.empty()
+
+    if poll_now and not auto_poll:
+        s = poll_status_once()
+        if s.get("error"):
+            status_box.error(f"Status error: {s.get('detail')}")
+        else:
+            status_box.write(s)
+        return
+
+    if auto_poll:
+        # Streamlit-friendly loop with stop condition: reruns are costly, so keep it short
+        # We'll poll a few times per render; user can keep page open.
+        for _ in range(20):  # ~40 seconds max per render
+            s = poll_status_once()
+            if s.get("error"):
+                status_box.error(f"Status error: {s.get('detail')}")
+                break
+
+            status_box.write({"status": s.get("status"), "expires_at": s.get("expires_at")})
+
+            if s.get("status") == "completed" and s.get("handoff_token"):
+                handoff_url = f"{API_URL}/handoff?handoff_token={urllib.parse.quote(s['handoff_token'], safe='')}&redirect_to=/app"
+                actions_box.success("✅ Approved. Open handoff to create session cookie on your site.")
+                actions_box.code(handoff_url, language="text")
+                st.link_button("🚀 Open connected session (via /handoff)", handoff_url, use_container_width=True)
+
+                # Optional: also provide extension-bridge URL if you want one-click through extension
+                # bridge = make_extension_connect_url(handoff_url)
+                # st.link_button("Open via extension bridge", bridge)
+
+                break
+
+            if s.get("status") in ("expired", "rejected"):
+                actions_box.error(f"Flow ended: {s.get('status')}")
+                break
+
+            time.sleep(2)
 
 
 def page_keycloak_device_flow():

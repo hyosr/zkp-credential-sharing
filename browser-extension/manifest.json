@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ZKP Share Cookie Injector",
   "version": "1.2.0",
-  "permissions": ["cookies", "tabs", "storage", "scripting", "webNavigation"],
+  "permissions": ["cookies", "tabs", "storage", "scripting", "webNavigation", "notifications", "alarms"],
   "host_permissions": [
     "http://localhost:8001/*",
     "https://www.facebook.com/*",

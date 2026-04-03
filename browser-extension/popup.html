@@ -50,6 +50,60 @@
 
       <section class="card">
         <label class="label" for="baseUrl">Backend URL</label>
+
+
+
+
+        <label class="label" for="jwt">Backend JWT</label>
+        <textarea
+          id="jwt"
+          class="textarea"
+          rows="2"
+          placeholder="Paste your JWT access_token (from /auth/verify) هنا"
+        ></textarea>
+
+        <div class="row" style="gap: 8px;">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="radio" name="mode" id="modeHandoff" checked />
+              <span>Handoff URL (inject)</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="radio" name="mode" id="modeAssisted" />
+            <span>Assisted (owner approval)</span>
+          </label>
+        </div>
+
+        <div id="assistedBox" style="display:none; margin-top: 10px;">
+          <label class="label" for="assistedToken">Share token (recipient)</label>
+          <textarea
+            id="assistedToken"
+            class="textarea"
+            rows="2"
+            placeholder="Paste share token هنا (recipient)"
+          ></textarea>
+
+          <div class="row">
+            <button id="assistedStart" class="btn primary">
+              <span id="assistedStartText">Request owner approval</span>
+              <span id="assistedSpinner" class="spinner hidden"></span>
+            </button>
+          </div>
+
+          <div class="muted" style="font-size: 12px; margin-top: 6px;">
+            The extension will poll backend status and open <code>/handoff</code> when ready.
+          </div>
+        </div>
+
+
+
+
+
+
+
+
+
+
+
         <input id="baseUrl" class="input" placeholder="http://localhost:8001" />
 
         <label class="label" for="token">Handoff token or URL</label>

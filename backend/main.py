@@ -25,8 +25,17 @@ from backend.routers.keycloak_secret import router as keycloak_secret_router
 
 from backend.routers.keycloak_handoff import router as keycloak_handoff_router
 
+from backend.models.assisted_access import AssistedAccessRequest  # noqa: F401
+
+from backend.routers.assisted_access import router as assisted_access_router
 
 
+from backend.routers.handoff import router as handoff_router
+
+
+from backend.routers.session import router as session_router
+
+from backend.routers.assisted_access import router as assisted_access_router
 
 
 @asynccontextmanager
@@ -76,6 +85,16 @@ app.include_router(extension_bridge_router)
 app.include_router(keycloak_secret_router)
 
 app.include_router(keycloak_handoff_router)
+
+
+app.include_router(assisted_access_router)
+
+app.include_router(handoff_router)
+
+app.include_router(session_router)
+
+app.include_router(assisted_access_router)
+
 
 @app.get("/")
 def root():

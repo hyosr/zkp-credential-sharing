@@ -32,6 +32,7 @@ function setLoading(btn, spinner, goText, isLoading) {
 document.addEventListener("DOMContentLoaded", async () => {
   const baseUrlEl = document.getElementById("baseUrl");
   const tokenEl = document.getElementById("token");
+  
   const goBtn = document.getElementById("go");
   const clearBtn = document.getElementById("clear");
   const statusEl = document.getElementById("status");
@@ -48,6 +49,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   ]);
 
 
+
+
+
+  jwtEl.value = saved.jwt || "";
+  assistedTokenEl.value = saved.assistedToken || "";
+
+
   baseUrlEl.value = saved.baseUrl || DEFAULT_BASE;
 
 
@@ -58,6 +66,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   delayAfterInjectEl.value = saved.delayAfterInject ?? 800;
 
 
+
+
+
+  const jwtEl = document.getElementById("jwt");
+
+  const modeHandoffEl = document.getElementById("modeHandoff");
+  const modeAssistedEl = document.getElementById("modeAssisted");
+  const assistedBox = document.getElementById("assistedBox");
+
+  const assistedTokenEl = document.getElementById("assistedToken");
+  const assistedStartBtn = document.getElementById("assistedStart");
+  const assistedSpinner = document.getElementById("assistedSpinner");
+  const assistedStartText = document.getElementById("assistedStartText");
 
 
   if (saved.handoffUrl) {
@@ -89,6 +110,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     await chrome.storage.local.set({ handoffUrl, baseUrl, ...opts });
 
+
+    await chrome.storage.local.set({ jwt: (jwtEl.value || "").trim() });
+    
+    
     chrome.runtime.sendMessage({ type: "RUN_HANDOFF", handoffUrl, opts }, (resp) => {      setLoading(goBtn, spinner, goText, false);
 
       if (chrome.runtime.lastError) {
@@ -102,6 +127,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       setStatus(statusEl, "Success. Opening connected profile…", "ok");
       setTimeout(() => window.close(), 450);
     });
+
+
+
+
+
+
+    
   }
 
   goBtn.addEventListener("click", run);
@@ -118,10 +150,72 @@ document.addEventListener("DOMContentLoaded", async () => {
     await chrome.storage.local.remove(["handoffUrl"]);
     setStatus(statusEl, "Cleared saved token.", "ok");
   });
+
+
+
+
+
+
+
+
+  function setLoading2(btn, spinner, textEl, isLoading, loadingText, idleText) {
+    btn.disabled = !!isLoading;
+    spinner.classList.toggle("hidden", !isLoading);
+    textEl.textContent = isLoading ? loadingText : idleText;
+}
+
+  async function startAssisted() {
+    const baseUrl = normalizeBaseUrl(baseUrlEl.value);
+    const jwt = (jwtEl.value || "").trim();
+    const token = (assistedTokenEl.value || "").trim();
+
+    if (!jwt) {
+      setStatus(statusEl, "Paste Backend JWT first.", "err");
+      return;
+  }
+    if (!token) {
+      setStatus(statusEl, "Paste the share token to request owner approval.", "err");
+      return;
+  }
+
+    setStatus(statusEl, "");
+    setLoading2(assistedStartBtn, assistedSpinner, assistedStartText, true, "Requesting...", "Request owner approval");
+
+    await chrome.storage.local.set({ baseUrl, jwt, assistedToken: token });
+
+    chrome.runtime.sendMessage(
+      { type: "ASSISTED_START", baseUrl, jwt, shareToken: token },
+      (resp) => {
+        setLoading2(assistedStartBtn, assistedSpinner, assistedStartText, false, "", "Request owner approval");
+
+        if (chrome.runtime.lastError) {
+          setStatus(statusEl, "Error: " + chrome.runtime.lastError.message, "err");
+          return;
+      }
+        if (!resp || !resp.ok) {
+          setStatus(statusEl, "Failed: " + (resp?.error || "unknown error"), "err");
+          return;
+      }
+        setStatus(statusEl, "Request sent. Waiting for owner approval…", "ok");
+    }
+  );
+}
+
+  assistedStartBtn.addEventListener("click", startAssisted);
 });
 
 
 
+
+
+
+
+function updateModeUI() {
+  assistedBox.style.display = modeAssistedEl.checked ? "block" : "none";
+}
+modeHandoffEl.addEventListener("change", updateModeUI);
+modeAssistedEl.addEventListener("change", updateModeUI);
+updateModeUI();
 
 
 
