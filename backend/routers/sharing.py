@@ -615,6 +615,150 @@ def _handoff_store_get(session_id: str) -> dict | None:
 
 
 
+# ========== Owner‑Assisted Relay Login ==========
+ASSISTED_REQUESTS: dict[str, dict] = {}
+ASSISTED_TTL = 600  # 10 minutes
+
+class AssistedRequestPayload(BaseModel):
+    share_token: str
+
+class AssistedSessionPayload(BaseModel):
+    cookies: list
+    localStorage: str | None = None
+    sessionStorage: str | None = None
+
+@router.post("/assisted/request")
+def assisted_create_request(
+    payload: AssistedRequestPayload,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Destinataire initie une demande d'assistance."""
+    requester_email = (current_user.email or "").strip().lower()
+    if not requester_email:
+        raise HTTPException(401, "Authenticated user email missing")
+
+    # Valider le share token
+    share_info = validate_token(payload.share_token, requester_email)
+    if not share_info:
+        raise HTTPException(403, "Token invalide, expiré, ou email non autorisé")
+
+    token_hash = hashlib.sha256(payload.share_token.encode()).hexdigest()
+    shared = db.query(SharedAccess).filter(
+        SharedAccess.token_hash == token_hash,
+        SharedAccess.is_revoked == False,
+    ).first()
+    if not shared or time.time() > shared.expires_at:
+        raise HTTPException(404, "Partage non trouvé ou expiré")
+
+    cred = db.query(Credential).filter(Credential.id == shared.credential_id).first()
+    if not cred:
+        raise HTTPException(404, "Credential non trouvé")
+
+    service_url = cred.service_url or ""
+    if not service_url:
+        raise HTTPException(400, "Credential missing service_url")
+
+    request_id = secrets.token_urlsafe(16)
+    ASSISTED_REQUESTS[request_id] = {
+        "owner_id": shared.owner_id,
+        "recipient_id": current_user.id,
+        "recipient_email": requester_email,
+        "service_url": service_url,
+        "status": "pending",  # pending -> approved -> session_received -> completed
+        "handoff_session_id": None,
+        "created_at": time.time(),
+        "expires_at": time.time() + ASSISTED_TTL,
+    }
+    return {"request_id": request_id, "status": "pending", "expires_at": ASSISTED_REQUESTS[request_id]["expires_at"]}
+
+@router.get("/assisted/pending")
+def assisted_pending_requests(current_user: User = Depends(get_current_user)):
+    """Propriétaire : liste des demandes en attente le concernant."""
+    now = time.time()
+    result = []
+    for rid, req in ASSISTED_REQUESTS.items():
+        if req["owner_id"] == current_user.id and req["status"] == "pending" and req["expires_at"] > now:
+            result.append({
+                "request_id": rid,
+                "service_url": req["service_url"],
+                "recipient_email": req["recipient_email"],
+                "expires_at": req["expires_at"],
+            })
+    return result
+
+@router.post("/assisted/{request_id}/approve")
+def assisted_approve(request_id: str, current_user: User = Depends(get_current_user)):
+    """Propriétaire approuve la demande → retourne l'URL de login où il devra se connecter."""
+    req = ASSISTED_REQUESTS.get(request_id)
+    if not req:
+        raise HTTPException(404, "Request not found")
+    if req["owner_id"] != current_user.id:
+        raise HTTPException(403, "Not allowed")
+    if req["expires_at"] <= time.time():
+        req["status"] = "expired"
+        raise HTTPException(400, "Request expired")
+    if req["status"] != "pending":
+        raise HTTPException(400, f"Invalid status: {req['status']}")
+
+    req["status"] = "approved"
+    # L'extension ouvrira cette URL (le site cible) pour que le propriétaire se connecte manuellement
+    assist_login_url = req["service_url"]
+    return {"status": "approved", "assist_login_url": assist_login_url}
+
+@router.post("/assisted/{request_id}/session")
+def assisted_submit_session(
+    request_id: str,
+    session_data: AssistedSessionPayload,
+    current_user: User = Depends(get_current_user),
+):
+    """Propriétaire envoie les cookies+storages après s'être connecté manuellement."""
+    req = ASSISTED_REQUESTS.get(request_id)
+    if not req:
+        raise HTTPException(404, "Request not found")
+    if req["owner_id"] != current_user.id:
+        raise HTTPException(403, "Not allowed")
+    if req["status"] != "approved":
+        raise HTTPException(400, f"Invalid status: {req['status']}")
+
+    # Stocker la session dans le handoff store existant
+    handoff_session_id = _handoff_store_put(
+        service_url=req["service_url"],
+        cookies=session_data.cookies,
+        localStorage=session_data.localStorage,
+        sessionStorage=session_data.sessionStorage,
+        current_url=req["service_url"],
+    )
+    req["status"] = "completed"
+    req["handoff_session_id"] = handoff_session_id
+    return {"handoff_session_id": handoff_session_id}
+
+@router.get("/assisted/{request_id}/status")
+def assisted_status(request_id: str, current_user: User = Depends(get_current_user)):
+    """Destinataire interroge le statut. Une fois completed, retourne handoff_session_id."""
+    req = ASSISTED_REQUESTS.get(request_id)
+    if not req:
+        raise HTTPException(404, "Request not found")
+    if current_user.id not in (req["owner_id"], req["recipient_id"]):
+        raise HTTPException(403, "Not allowed")
+
+    if req["expires_at"] <= time.time() and req["status"] in ("pending", "approved"):
+        req["status"] = "expired"
+
+    return {
+        "status": req["status"],
+        "handoff_session_id": req.get("handoff_session_id"),
+        "expires_at": req["expires_at"],
+    }
+
+
+
+
+
+
+
+
+
 
 
 

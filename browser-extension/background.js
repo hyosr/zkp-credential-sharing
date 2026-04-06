@@ -235,7 +235,7 @@ let assistedPollTimer = null;
 
 async function assistedStartFlow(baseUrl, jwtToken, shareToken) {
   // Create assisted request
-  const created = await apiPostJson(baseUrl, "/sharing/assisted/request", jwtToken, { token: shareToken });
+  const created = await apiPostJson(baseUrl, "/sharing/assisted/request", jwtToken, { share_token: shareToken });
   const requestId = created.request_id;
 
   await chrome.storage.local.set({ assistedRequestId: requestId });
@@ -261,7 +261,7 @@ async function assistedStartFlow(baseUrl, jwtToken, shareToken) {
         if (chrome.notifications?.create) {
           chrome.notifications.create(`assisted:done:${requestId}`, {
             type: "basic",
-            iconUrl: "icon128.png",
+            // iconUrl: "icon128.png",
             title: "Assisted access ready",
             message: "Opening delegated session…",
             priority: 1,
@@ -274,7 +274,7 @@ async function assistedStartFlow(baseUrl, jwtToken, shareToken) {
         if (chrome.notifications?.create) {
           chrome.notifications.create(`assisted:fail:${requestId}`, {
             type: "basic",
-            iconUrl: "icon128.png",
+            // iconUrl: "icon128.png",
             title: "Assisted access failed",
             message: `Status: ${st.status}`,
             priority: 2,
@@ -293,26 +293,112 @@ async function assistedStartFlow(baseUrl, jwtToken, shareToken) {
 let ownerPollTimer = null;
 let seenPending = new Set();
 
+// async function ownerStartPolling(baseUrl, jwtToken) {
+//   if (ownerPollTimer) return;
+
+//   ownerPollTimer = setInterval(async () => {
+//     try {
+//       const pending = await apiGetJson(baseUrl, "/sharing/assisted/pending", jwtToken);
+
+//       for (const item of pending) {
+//         const key = item.request_id;
+//         if (seenPending.has(key)) continue;
+//         seenPending.add(key);
+
+//         if (chrome.notifications?.create) {
+//           chrome.notifications.create(`assist:${key}`, {
+//             type: "basic",
+//             // iconUrl: "icon128.png",
+//             title: "Assisted login request",
+//             message: `Recipient requests access to: ${item.service_url}`,
+//             priority: 2,
+//           });
+//         }
+//       }
+//     } catch (e) {
+//       console.warn("owner pending poll error:", e);
+//     }
+//   }, 5000);
+// }
+
+
+
+
+
+// async function ownerStartPolling(baseUrl, jwtToken) {
+//   if (ownerPollTimer) return;
+
+//   ownerPollTimer = setInterval(async () => {
+//     try {
+//       const pending = await apiGetJson(baseUrl, "/sharing/assisted/pending", jwtToken);
+
+//       for (const item of pending) {
+//         const key = item.request_id;
+//         if (seenPending.has(key)) continue;
+//         seenPending.add(key);
+
+//         if (chrome.notifications?.create) {
+//           try {
+//             await new Promise((resolve, reject) => {
+//               chrome.notifications.create(`assist:${key}`, {
+//                 type: "basic",
+//                 title: "Assisted login request",
+//                 message: `Recipient requests access to: ${item.service_url}`,
+//                 priority: 2,
+//               }, (notificationId) => {
+//                 if (chrome.runtime.lastError) {
+//                   reject(new Error(chrome.runtime.lastError.message));
+//                 } else {
+//                   resolve(notificationId);
+//                 }
+//               });
+//             });
+//           } catch (notifErr) {
+//             console.error("Notification creation failed:", notifErr);
+//           }
+//         }
+//       }
+//     } catch (e) {
+//       console.warn("owner pending poll error:", e);
+//     }
+//   }, 5000);
+// }
+
+
+
+
+
+
+
+
+
+
+
 async function ownerStartPolling(baseUrl, jwtToken) {
   if (ownerPollTimer) return;
-
   ownerPollTimer = setInterval(async () => {
     try {
       const pending = await apiGetJson(baseUrl, "/sharing/assisted/pending", jwtToken);
-
       for (const item of pending) {
         const key = item.request_id;
         if (seenPending.has(key)) continue;
         seenPending.add(key);
-
         if (chrome.notifications?.create) {
-          chrome.notifications.create(`assist:${key}`, {
-            type: "basic",
-            iconUrl: "icon128.png",
-            title: "Assisted login request",
-            message: `Recipient requests access to: ${item.service_url}`,
-            priority: 2,
-          });
+          try {
+            await new Promise((resolve, reject) => {
+              chrome.notifications.create(`assist:${key}`, {
+                type: "basic",
+                title: "Assisted login request",
+                message: `Recipient requests access to: ${item.service_url}`,
+                priority: 2,
+              }, (notificationId) => {
+                if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+                else resolve(notificationId);
+              });
+            });
+          } catch (notifErr) {
+            console.error("Notification creation failed:", notifErr);
+          }
         }
       }
     } catch (e) {
@@ -321,35 +407,280 @@ async function ownerStartPolling(baseUrl, jwtToken) {
   }, 5000);
 }
 
+
+
+
+
+
+
+
+
+
+
+// if (chrome.notifications?.onClicked) {
+//   chrome.notifications.onClicked.addListener(async (notifId) => {
+//     if (!notifId.startsWith("assist:")) return;
+//     const requestId = notifId.slice("assist:".length);
+
+//     const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
+//     if (!baseUrl || !jwt) return;
+
+//     try {
+//       const resp = await apiPostJson(
+//         baseUrl,
+//         `/sharing/assisted/${encodeURIComponent(requestId)}/approve`,
+//         jwt,
+//         {}
+//       );
+
+//       if (!resp.assist_login_url) throw new Error("approve response missing assist_login_url");
+
+//       // Owner will complete CAPTCHA/2FA on YOUR site; your site then calls /complete.
+//       // await chrome.tabs.create({ url: resp.assist_login_url, active: true });
+
+
+
+//       const tab = await chrome.tabs.create({ url: resp.assist_login_url, active: true });
+//       await chrome.storage.local.set({ pendingCaptureRequestId: requestId, pendingCaptureTabId: tab.id });
+//       chrome.action.setBadgeText({ text: "!" });
+//       chrome.action.setBadgeBackgroundColor({ color: "#FF0000" });
+
+
+//     } catch (e) {
+//       console.error("approve failed:", e);
+//     }
+//   });
+// }
+
+
+
+
+
+
+
+
+// Notification click handler (owner)
 if (chrome.notifications?.onClicked) {
   chrome.notifications.onClicked.addListener(async (notifId) => {
     if (!notifId.startsWith("assist:")) return;
     const requestId = notifId.slice("assist:".length);
-
     const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
     if (!baseUrl || !jwt) return;
-
     try {
-      const resp = await apiPostJson(
-        baseUrl,
-        `/sharing/assisted/${encodeURIComponent(requestId)}/approve`,
-        jwt,
-        {}
-      );
-
+      const resp = await apiPostJson(baseUrl, `/sharing/assisted/${encodeURIComponent(requestId)}/approve`, jwt, {});
       if (!resp.assist_login_url) throw new Error("approve response missing assist_login_url");
-
-      // Owner will complete CAPTCHA/2FA on YOUR site; your site then calls /complete.
-      await chrome.tabs.create({ url: resp.assist_login_url, active: true });
+      const tab = await chrome.tabs.create({ url: resp.assist_login_url, active: true });
+      // Store pending capture info with service URL (the target site URL)
+      await chrome.storage.local.set({
+        pendingCaptureRequestId: requestId,
+        pendingCaptureTabId: tab.id,
+        pendingServiceUrl: resp.assist_login_url  // URL du site cible
+      });
+      chrome.action.setBadgeText({ text: "!" });
     } catch (e) {
       console.error("approve failed:", e);
     }
   });
 }
 
-/* ---------- Messages from popup ---------- */
+
+
+
+
+
+
+
+
+
+// // ========== OWNER: Capture session after manual login ==========
+// async function captureCurrentSession(tabId, serviceUrl, requestId) {
+//   // Récupérer les cookies pour le domaine
+//   const cookies = await chrome.cookies.getAll({ url: serviceUrl });
+//   // Exécuter dans la page pour récupérer localStorage et sessionStorage
+//   const injectionResult = await chrome.scripting.executeScript({
+//     target: { tabId },
+//     func: () => {
+//       const ls = {};
+//       for (let i = 0; i < localStorage.length; i++) {
+//         const key = localStorage.key(i);
+//         ls[key] = localStorage.getItem(key);
+//       }
+//       const ss = {};
+//       for (let i = 0; i < sessionStorage.length; i++) {
+//         const key = sessionStorage.key(i);
+//         ss[key] = sessionStorage.getItem(key);
+//       }
+//       return { localStorage: ls, sessionStorage: ss };
+//     }
+//   });
+//   const { localStorage, sessionStorage } = injectionResult[0].result;
+
+//   // Envoyer au backend
+//   const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
+//   const response = await fetch(`${baseUrl}/sharing/assisted/${requestId}/session`, {
+//     method: "POST",
+//     headers: {
+//       "Content-Type": "application/json",
+//       Authorization: `Bearer ${jwt}`,
+//     },
+//     body: JSON.stringify({
+//       cookies: cookies,
+//       localStorage: JSON.stringify(localStorage),
+//       sessionStorage: JSON.stringify(sessionStorage),
+//     }),
+//   });
+//   if (!response.ok) throw new Error("Failed to submit session");
+//   return await response.json();
+// }
+
+
+
+
+
+
+
+
+// ========== OWNER: Capture session after manual login ==========
+async function captureCurrentSession(tabId, serviceUrl, requestId) {
+  // Récupérer les cookies pour le domaine
+  const cookies = await chrome.cookies.getAll({ url: serviceUrl });
+  // Exécuter dans la page pour récupérer localStorage et sessionStorage
+  const injectionResult = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const ls = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        ls[key] = localStorage.getItem(key);
+      }
+      const ss = {};
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const key = sessionStorage.key(i);
+        ss[key] = sessionStorage.getItem(key);
+      }
+      return { localStorage: ls, sessionStorage: ss };
+    }
+  });
+  const { localStorage, sessionStorage } = injectionResult[0].result;
+
+  const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
+  const response = await fetch(`${baseUrl}/sharing/assisted/${requestId}/session`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${jwt}`,
+    },
+    body: JSON.stringify({
+      cookies: cookies,
+      localStorage: JSON.stringify(localStorage),
+      sessionStorage: JSON.stringify(sessionStorage),
+    }),
+  });
+  if (!response.ok) throw new Error("Failed to submit session");
+  return await response.json();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// /* ---------- Messages from popup ---------- */
+// chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+//   // Existing mode: injection from handoff URL
+//   if (msg?.type === "RUN_HANDOFF") {
+//     (async () => {
+//       try {
+//         const url = msg.handoffUrl || (await chrome.storage.local.get(["handoffUrl"])).handoffUrl;
+//         if (!url) throw new Error("Missing handoffUrl");
+//         await doHandoff(url, msg.opts || {});
+//         sendResponse({ ok: true });
+//       } catch (e) {
+//         sendResponse({ ok: false, error: String(e?.message || e) });
+//       }
+//     })();
+//     return true;
+//   }
+
+
+
+
+
+
+//   if (msg.type === "CAPTURE_SESSION") {
+//       (async () => {
+//         try {
+//           const { pendingCaptureRequestId, pendingCaptureTabId } = await chrome.storage.local.get([
+//             "pendingCaptureRequestId", "pendingCaptureTabId"
+//           ]);
+//           if (!pendingCaptureRequestId || !pendingCaptureTabId) {
+//             throw new Error("No pending capture request. Did you approve a request?");
+//           }
+//           await captureCurrentSession(pendingCaptureTabId, pendingCaptureRequestId);
+//           // Nettoyer
+//           await chrome.storage.local.remove(["pendingCaptureRequestId", "pendingCaptureTabId"]);
+//           chrome.action.setBadgeText({ text: "" });
+//           sendResponse({ ok: true });
+//         } catch (e) {
+//           console.error("Capture failed:", e);
+//           sendResponse({ ok: false, error: e.message });
+//         }
+//       })();
+//       return true; // indique que la réponse sera asynchrone
+//     }
+
+
+
+
+
+
+
+
+
+//   // New mode: assisted recipient flow (safe)
+//   if (msg?.type === "ASSISTED_START") {
+//     (async () => {
+//       try {
+//         const baseUrl = msg.baseUrl || (await chrome.storage.local.get(["baseUrl"])).baseUrl;
+//         const jwt = msg.jwt || (await chrome.storage.local.get(["jwt"])).jwt;
+//         if (!baseUrl) throw new Error("Missing baseUrl");
+//         if (!jwt) throw new Error("Missing jwt");
+//         if (!msg.shareToken) throw new Error("Missing shareToken");
+
+//         await chrome.storage.local.set({ baseUrl, jwt });
+
+//         // Start owner polling too (if user is owner in another session, they will see pending)
+//         ownerStartPolling(baseUrl, jwt).catch(() => {});
+
+//         const r = await assistedStartFlow(baseUrl, jwt, msg.shareToken);
+//         sendResponse({ ok: true, requestId: r.requestId });
+//       } catch (e) {
+//         sendResponse({ ok: false, error: String(e?.message || e) });
+//       }
+//     })();
+//     return true;
+//   }
+// });
+
+
+
+
+
+
+
+
+// ---------- Messages from popup ----------
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  // Existing mode: injection from handoff URL
   if (msg?.type === "RUN_HANDOFF") {
     (async () => {
       try {
@@ -364,21 +695,51 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // New mode: assisted recipient flow (safe)
+  if (msg.type === "CAPTURE_SESSION") {
+    (async () => {
+      try {
+        const { tabId, serviceUrl, requestId } = msg;
+        if (!tabId || !serviceUrl || !requestId) {
+          throw new Error("Missing capture parameters");
+        }
+        await captureCurrentSession(tabId, serviceUrl, requestId);
+        await chrome.storage.local.remove(["pendingCaptureRequestId", "pendingCaptureTabId", "pendingServiceUrl"]);
+        chrome.action.setBadgeText({ text: "" });
+        sendResponse({ ok: true });
+      } catch (e) {
+        console.error("Capture failed:", e);
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
+
+
+
+  if (msg.type === "START_OWNER_POLLING") {
+  ownerStartPolling(msg.baseUrl, msg.jwt).catch(console.error);
+  sendResponse({ ok: true });
+  return true;
+}
+
+
+
+
+
+
+
+
+
+
   if (msg?.type === "ASSISTED_START") {
     (async () => {
       try {
         const baseUrl = msg.baseUrl || (await chrome.storage.local.get(["baseUrl"])).baseUrl;
         const jwt = msg.jwt || (await chrome.storage.local.get(["jwt"])).jwt;
-        if (!baseUrl) throw new Error("Missing baseUrl");
-        if (!jwt) throw new Error("Missing jwt");
-        if (!msg.shareToken) throw new Error("Missing shareToken");
-
+        if (!baseUrl || !jwt || !msg.shareToken) throw new Error("Missing parameters");
         await chrome.storage.local.set({ baseUrl, jwt });
-
-        // Start owner polling too (if user is owner in another session, they will see pending)
         ownerStartPolling(baseUrl, jwt).catch(() => {});
-
         const r = await assistedStartFlow(baseUrl, jwt, msg.shareToken);
         sendResponse({ ok: true, requestId: r.requestId });
       } catch (e) {
@@ -388,6 +749,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 });
+
+// Auto-start owner polling when extension loads
+(async () => {
+  const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
+  if (baseUrl && jwt) {
+    ownerStartPolling(baseUrl, jwt).catch(console.error);
+  }
+})();
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* ---------- Optional: Bridge URL support (handoff injection) ---------- */
 function isBridgeUrl(url) {
@@ -424,7 +805,18 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
 
 
 
+// Auto-start owner polling when extension loads
+(async () => {
+  const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
+  if (baseUrl && jwt) {
+    console.log("Auto-starting owner polling");
 
+    ownerStartPolling(baseUrl, jwt).catch(console.error);
+  }else {
+    console.log("Missing baseUrl or jwt, polling not started");
+  }
+  
+})();
 
 
 

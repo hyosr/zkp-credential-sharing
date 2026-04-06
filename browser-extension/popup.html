@@ -29,7 +29,7 @@
 
 
 
-<!doctype html>
+<!-- <!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -62,6 +62,25 @@
           placeholder="Paste your JWT access_token (from /auth/verify) هنا"
         ></textarea>
 
+
+
+        <div id="pendingRequestsSection" style="margin-top: 12px;">
+          <hr />
+          <h3>Pending assisted requests</h3>
+          <div id="pendingList" style="max-height: 200px; overflow-y: auto;">
+            Loading...
+          </div>
+          <button id="refreshPending" class="btn ghost" style="margin-top: 8px;">Refresh</button>
+        </div>
+        
+
+
+
+
+
+
+
+
         <div class="row" style="gap: 8px;">
           <label style="display:flex;align-items:center;gap:8px;">
             <input type="radio" name="mode" id="modeHandoff" checked />
@@ -89,15 +108,22 @@
             </button>
           </div>
 
+
+
+
+          <div class="row" style="margin-top: 12px;">
+            <button id="finishLogin" class="btn primary">
+              <span>I finished login (capture session)</span>
+            </button>
+          </div>
+
+
+
+
           <div class="muted" style="font-size: 12px; margin-top: 6px;">
             The extension will poll backend status and open <code>/handoff</code> when ready.
           </div>
         </div>
-
-
-
-
-
 
 
 
@@ -132,6 +158,133 @@
 
 
         
+
+        <div class="row">
+          <button id="go" class="btn primary">
+            <span id="goText">Connect</span>
+            <span id="spinner" class="spinner hidden"></span>
+          </button>
+          <button id="clear" class="btn ghost" title="Clear saved token">Clear</button>
+        </div>
+
+        <div id="status" class="status" aria-live="polite"></div>
+
+        <details class="details">
+          <summary>Tips</summary>
+          <ul>
+            <li>Press <b>Enter</b> to connect (Shift+Enter for new line).</li>
+            <li>You can paste either a <b>token</b> or the full <b>handoff URL</b>.</li>
+            <li>The extension saves your last backend URL and token locally.</li>
+          </ul>
+        </details>
+      </section>
+
+      <footer class="footer">
+        <span class="muted">ZKP handoff opens a connected profile tab after injection.</span>
+      </footer>
+    </div>
+
+
+
+
+
+    <script src="popup.js"></script>
+  </body>
+</html> -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ZKP Handoff</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="logo">ZKP</div>
+        <div class="title">
+          <div class="name">Credential Sharing</div>
+          <div class="subtitle">Secure login handoff</div>
+        </div>
+      </header>
+
+      <section class="card">
+        <label class="label" for="baseUrl">Backend URL</label>
+        <input id="baseUrl" class="input" placeholder="http://localhost:8001" />
+
+        <label class="label" for="jwt">Backend JWT</label>
+        <textarea id="jwt" class="textarea" rows="2" placeholder="Paste your JWT access_token"></textarea>
+
+        <div id="pendingRequestsSection" style="margin-top: 12px;">
+          <hr />
+          <h3>Pending assisted requests</h3>
+          <div id="pendingList" style="max-height: 200px; overflow-y: auto;">Loading...</div>
+          <button id="refreshPending" class="btn ghost" style="margin-top: 8px;">Refresh</button>
+        </div>
+
+        <div class="row" style="gap: 8px;">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="radio" name="mode" id="modeHandoff" checked />
+            <span>Handoff URL (inject)</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input type="radio" name="mode" id="modeAssisted" />
+            <span>Assisted (owner approval)</span>
+          </label>
+        </div>
+
+        <div id="assistedBox" style="display:none; margin-top: 10px;">
+          <label class="label" for="assistedToken">Share token (recipient)</label>
+          <textarea id="assistedToken" class="textarea" rows="2" placeholder="Paste share token here (recipient)"></textarea>
+
+          <div class="row">
+            <button id="assistedStart" class="btn primary">
+              <span id="assistedStartText">Request owner approval</span>
+              <span id="assistedSpinner" class="spinner hidden"></span>
+            </button>
+          </div>
+
+          <div class="row" style="margin-top: 12px;">
+            <button id="finishLogin" class="btn primary">
+              <span>I finished login (capture session)</span>
+            </button>
+          </div>
+
+          <div class="muted" style="font-size: 12px; margin-top: 6px;">
+            After you manually log in on the target site, click the button above to capture and share the session.
+          </div>
+        </div>
+
+        <label class="label" for="token">Handoff token or URL</label>
+        <textarea id="token" class="textarea" rows="3" placeholder="Paste session_id or full handoff URL"></textarea>
+
+        <div class="row" style="gap: 8px;">
+          <div style="flex: 1;">
+            <label class="label" for="delayBetweenCookies">Delay between cookies (ms)</label>
+            <input id="delayBetweenCookies" class="input" type="number" min="0" step="50" placeholder="150" />
+          </div>
+          <div style="flex: 1;">
+            <label class="label" for="delayAfterInject">Delay after inject (ms)</label>
+            <input id="delayAfterInject" class="input" type="number" min="0" step="100" placeholder="800" />
+          </div>
+        </div>
 
         <div class="row">
           <button id="go" class="btn primary">

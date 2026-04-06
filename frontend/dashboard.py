@@ -187,6 +187,52 @@ def api_delete(path: str, token: str):
         return {"status": r.status_code, "text": r.text}
 
 
+
+
+
+
+
+
+
+
+
+def api_post_strict(endpoint: str, data: dict, token: str = None, timeout: int = 60) -> dict:
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    r = requests.post(f"{API_URL}{endpoint}", json=data, headers=headers, timeout=timeout)
+    try:
+        j = r.json()
+    except Exception:
+        j = {"status_code": r.status_code, "text": r.text[:2000]}
+    if r.status_code >= 400:
+        # normalize error
+        detail = j.get("detail") if isinstance(j, dict) else None
+        return {"error": True, "status_code": r.status_code, "detail": detail or j}
+    return j
+
+
+def api_get_strict(endpoint: str, token: str = None, timeout: int = 30) -> dict:
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    r = requests.get(f"{API_URL}{endpoint}", headers=headers, timeout=timeout)
+    try:
+        j = r.json()
+    except Exception:
+        j = {"status_code": r.status_code, "text": r.text[:2000]}
+    if r.status_code >= 400:
+        detail = j.get("detail") if isinstance(j, dict) else None
+        return {"error": True, "status_code": r.status_code, "detail": detail or j}
+    return j
+
+
+
+
+
+
+
+
 # ─── UI THEME (visual only) ───────────────────────────────────────────────────
 
 
@@ -450,7 +496,9 @@ def main():
         "🤝 Share",
         "📩 Access a Share",
         "🚪 Relay Login (no password reveal)",
+        "👥 Assisted Relay Login",
         "🧩 Assisted Login (CAPTCHA/2FA supported)",
+        "🛎️ Owner — Assisted Requests",
         # "🔐 Keycloak Passwordless Share (Device Flow)",
         "📋 Audit Trail",
         "ℹ️ About ZKP",
@@ -485,8 +533,11 @@ def main():
         page_keycloak_device_flow()
     elif menu == "🧩 Assisted Login (CAPTCHA/2FA supported)":
         page_assisted_login()
+    elif menu == "🛎️ Owner — Assisted Requests":
+        page_owner_assisted_requests()
 
-
+    elif menu == "👥 Assisted Relay Login":
+        page_assisted_relay_login()
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -585,241 +636,6 @@ def page_login():
             else:
                 st.error(f"Authentication failed: {resp_verify.get('detail', resp_verify)}")
 
-
-# def page_keycloak_device_flow():
-#     st.title("🔐 Keycloak Passwordless Share (Device Authorization Grant)")
-#     st.markdown(
-#         """
-# This module implements **option B**: sharing access **without sharing the password**.
-
-# - Recipient starts a *Device Flow* → obtains a `user_code`
-# - Owner logs in **directly on Keycloak**
-# - Backend retrieves an `access_token` via polling
-#         """
-#     )
-
-#     col1, col2 = st.columns(2, gap="large")
-
-#     with col1:
-#         st.subheader("Step 1 — Start device flow")
-#         if st.button("Start device flow", use_container_width=True):
-#             r = api_post("/keycloak-sharing/device/start", {})
-#             if "device_code" in r:
-#                 st.session_state["kc_device"] = r
-#                 st.success("Device flow started")
-#             else:
-#                 st.error(r.get("detail", r))
-
-#         device = st.session_state.get("kc_device")
-#         if device:
-#             st.markdown('<div class="zkp-card">', unsafe_allow_html=True)
-#             st.write("verification_uri:", device.get("verification_uri"))
-#             st.write("user_code:", device.get("user_code"))
-#             if device.get("verification_uri_complete"):
-#                 st.write("verification_uri_complete:", device.get("verification_uri_complete"))
-#             st.code(device.get("user_code", ""), language="text")
-#             st.markdown("</div>", unsafe_allow_html=True)
-
-#     with col2:
-#         st.subheader("Step 2 — Poll for token")
-#         st.markdown("After logging in on Keycloak, retrieve the token:")
-#         if st.button("Poll for token", use_container_width=True):
-#             device = st.session_state.get("kc_device")
-#             if not device:
-#                 st.error("Start device flow first.")
-#                 return
-
-#             r = api_post("/keycloak-sharing/device/poll", {
-#                 "device_code": device["device_code"],
-#                 "interval": int(device.get("interval", 5)),
-#             })
-
-#             if "access_token" in r:
-#                 st.session_state["kc_token"] = r
-#                 st.success("Access token received")
-#             else:
-#                 st.error(r.get("detail", r))
-
-#         token = st.session_state.get("kc_token")
-#         if token:
-#             st.markdown('<div class="zkp-card">', unsafe_allow_html=True)
-#             st.write("token_type:", token.get("token_type"))
-#             st.write("expires_in:", token.get("expires_in"))
-#             st.text_area("access_token", token.get("access_token", ""), height=180)
-#             st.markdown("</div>", unsafe_allow_html=True)
-
-
-
-
-# def page_keycloak_device_flow():
-#     st.title("🔐 Keycloak Passwordless Share (Device Authorization Grant)")
-#     st.markdown("""
-# This module implements option B: sharing access **without sharing the password**.
-
-# Recipient starts a Device Flow → obtains a user_code  
-# Owner logs in directly on Keycloak  
-# Backend retrieves an access_token via polling
-#     """)
-
-#     col1, col2 = st.columns(2)
-
-#     with col1:
-#         st.subheader("Step 1 — Start device flow")
-#         if st.button("Start device flow", use_container_width=True):
-#             r = api_post("/keycloak-sharing/device/start", {})
-#             if "device_code" in r:
-#                 st.session_state["kc_device"] = r
-#                 st.success("Device flow started")
-#             else:
-#                 st.error(r.get("detail", r))
-
-#         device = st.session_state.get("kc_device")
-#         if device:
-#             st.write("verification_uri:", device.get("verification_uri"))
-#             st.write("user_code:", device.get("user_code"))
-#             if device.get("verification_uri_complete"):
-#                 st.write("verification_uri_complete:", device.get("verification_uri_complete"))
-#             st.code(device.get("user_code", ""), language="text")
-
-#     with col2:
-#         st.subheader("Step 2 — Poll for token")
-#         st.caption("After logging in on Keycloak using the verification URL, poll until token is issued.")
-#         if st.button("Poll for token", use_container_width=True):
-#             device = st.session_state.get("kc_device")
-#             if not device:
-#                 st.error("Start device flow first.")
-#                 return
-
-#             r = api_post("/keycloak-sharing/device/poll", {
-#                 "device_code": device["device_code"],
-#                 "interval": int(device.get("interval", 5)),
-#             })
-
-#             if "access_token" in r:
-#                 st.session_state["kc_token"] = r
-#                 st.success("Access token received")
-#             else:
-#                 st.error(r.get("detail", r))
-
-#         token = st.session_state.get("kc_token")
-#         if token:
-#             st.write("token_type:", token.get("token_type"))
-#             st.write("expires_in:", token.get("expires_in"))
-#             st.text_area("access_token", token.get("access_token", ""), height=180)
-
-
-# #------------------------------------------------------------------
-
-
-
-#     st.markdown("---")
-#     st.subheader("Owner — Generate passwordless handoff link (to share)")
-
-#     if not st.session_state.get("jwt_token"):
-#         st.error("You must be logged in with ZKP (JWT) as owner.")
-#     else:
-#         share_id = st.number_input("Share ID to handoff", min_value=1, step=1, value=1)
-
-#         if st.button("Generate Keycloak device link", use_container_width=True):
-#             with st.spinner("Starting device flow..."):
-#                 r = api_post(
-#                     f"/keycloak-sharing/handoff/start?share_id={int(share_id)}",
-#                     data={},
-#                     token=st.session_state.jwt_token,
-#                 )
-#         if "kc_session_id" in r:
-#             st.session_state["kc_handoff"] = r
-#             st.success("Link generated.")
-#         else:
-#             st.error("Failed to generate link")
-#             st.json(r)
-
-#     handoff = st.session_state.get("kc_handoff")
-#     if handoff:
-#         st.write("recipient_link:")
-#         st.code(handoff["recipient_link"], language="text")
-#         st.write("verification_uri_complete:")
-#         st.code(handoff["device_flow"].get("verification_uri_complete", ""), language="text")
-#         st.write("user_code:")
-#         st.code(handoff["device_flow"].get("user_code", ""), language="text")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#     # Step 3: Use token to retrieve shared secret
-#     # st.markdown("---")
-#     # st.subheader("Step 3 — Use token to retrieve the shared secret (protected endpoint)")
-
-#     # access_token = st.session_state.get("kc_token", {}).get("access_token")
-#     # if not access_token:
-#     #     st.info("Complete Step 2 first (get an access_token).")
-#     # else:
-#     #     cred_id = st.number_input("Credential ID (or share ID)", min_value=1, step=1, value=1)
-
-#     #     if st.button("Fetch secret from backend", use_container_width=True):
-#     #         headers = {"Authorization": f"Bearer {access_token}"}
-#     #         try:
-#     #             # Appel à l'endpoint protégé (à créer dans le backend)
-#     #             resp = requests.get(f"{API_URL}/protected/credential/{cred_id}", headers=headers, timeout=30)
-#     #             if resp.status_code == 200:
-#     #                 data = resp.json()
-#     #                 st.success("✅ Secret retrieved successfully!")
-#     #                 st.code(data.get("secret", "No secret in response"), language="text")
-#     #             else:
-#     #                 st.error(f"❌ Failed to retrieve secret (HTTP {resp.status_code})")
-#     #                 st.json(resp.text if resp.text else {"error": "Empty response"})
-#     #         except Exception as e:
-#     #             st.error(f"Request failed: {e}")
-
-
-
-
-#     st.markdown("---")
-#     st.subheader("Step 3 — Retrieve the shared secret (protected by Keycloak token)")
-
-#     access_token = st.session_state.get("kc_token", {}).get("access_token")
-#     if not access_token:
-#         st.info("Complete Step 2 first (get an access_token).")
-#         return
-
-#     share_id = st.number_input("Share ID", min_value=1, step=1, value=1)
-
-#     if st.button("🔓 Retrieve secret", use_container_width=True):
-#         headers = {"Authorization": f"Bearer {access_token}"}
-#         try:
-#             resp = requests.get(f"{API_URL}/keycloak/secret/{share_id}", headers=headers, timeout=30)
-
-#             if resp.status_code == 200:
-#                 data = resp.json()
-#                 st.success("✅ Secret retrieved successfully (authorized via Keycloak).")
-#                 st.write("Credential:", data.get("credential_name"))
-#                 st.write("Service URL:", data.get("service_url"))
-#                 st.write("Username:", data.get("username"))
-#                 st.code(data.get("secret", ""), language="text")
-#             else:
-#                 # ✅ Important: secret is NEVER shown when token invalid/expired
-#                 try:
-#                     err = resp.json()
-#                 except Exception:
-#                     err = {"status_code": resp.status_code, "text": resp.text[:2000]}
-#                 st.error(f"❌ Failed (HTTP {resp.status_code})")
-#                 st.json(err)
-
-#         except Exception as e:
-#             st.error(f"Request failed: {e}")
 
 
 
@@ -942,6 +758,56 @@ The recipient opens `/handoff` to create a first‑party session cookie.
                 break
 
             time.sleep(2)
+
+
+
+        
+
+
+
+
+
+def page_owner_assisted_requests():
+    st.title("👑 Owner — Assisted Requests")
+    st.markdown("Pending requests from recipients. Click 'Approve and assist' to help them log in.")
+    token = st.session_state.jwt_token
+    if not token:
+        st.error("Not logged in")
+        return
+
+    pending = api_get("/sharing/assisted/pending", token=token)
+
+    # Gérer les erreurs : si c'est un dict avec "error"
+    if isinstance(pending, dict) and pending.get("error"):
+        st.error(f"API error: {pending.get('error')}")
+        return
+    # Si ce n'est pas une liste, erreur inattendue
+    if not isinstance(pending, list):
+        st.error(f"Unexpected response: {pending}")
+        return
+    if not pending:
+        st.info("No pending assisted requests.")
+        return
+
+    for req in pending:
+        with st.expander(f"Request from {req.get('recipient_email')} for {req.get('service_url')}"):
+            st.write(f"**Request ID:** {req.get('request_id')}")
+            st.write(f"**Expires:** {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(req.get('expires_at')))}")
+            if st.button("Approve and assist", key=f"approve_{req.get('request_id')}"):
+                resp = api_post(f"/sharing/assisted/{req.get('request_id')}/approve", {}, token=token)
+                if resp.get("assist_login_url"):
+                    st.success("Approved! Opening login page...")
+                    st.markdown(f"[Open login page]({resp['assist_login_url']})")
+                else:
+                    st.error(f"Approval failed: {resp.get('detail', resp)}")
+
+
+
+
+
+
+
+
 
 
 def page_keycloak_device_flow():
@@ -1197,6 +1063,17 @@ def page_credentials():
     if not token:
         st.error("Not logged in")
         return
+    
+
+
+    # Afficher le JWT (pour debug / copier)
+    with st.expander("🔐 Your JWT Token (copy for extension or API tests)"):
+        st.code(token, language="text")
+        st.caption("Ce token est utilisé pour les requêtes authentifiées. Ne le partagez pas.")
+    
+
+
+
 
     creds = api_get("/credentials/", token=token)
     if not isinstance(creds, list):
@@ -1405,102 +1282,6 @@ def page_share():
             st.error(f"Finalize error: {fin}")
 
 
-# def page_relay_login():
-#     st.title("🚪 Secure Relay Login (without revealing the password)")
-#     st.markdown(
-#         """
-# This mode allows the recipient to log in to a *classic* app (username/password)
-# **without ever seeing the password**.
-
-# The backend uses a headless browser (Playwright) to perform the login, then returns session cookies.
-#         """
-#     )
-
-#     with st.form("relay_form"):
-#         token_input = st.text_input("Share token")
-#         # requester_email = st.text_input("Your email")
-#         submitted = st.form_submit_button("Login via Relay", use_container_width=True)
-
-#     if submitted and token_input :
-#         with st.spinner("Relay login..."):
-#             result = api_post("/sharing/relay-login", {
-#                 "token": token_input,
-                
-#             }, token=st.session_state.jwt_token)
-
-#         if "cookies" in result:
-#             st.success("Relay login OK. Session cookies retrieved.")
-#             st.write("URL after login:", result.get("relay", {}).get("current_url"))
-#             st.write("Title:", result.get("relay", {}).get("title"))
-#             st.json(result.get("cookies", []))
-#             st.warning(
-#                 "To use these cookies in a normal browser, you need an extension or a script. "
-#                 "Streamlit cannot inject cookies into your browser automatically."
-#             )
-
-#         elif "localStorage" in result and result["localStorage"]:
-#             st.write("LocalStorage (may contain tokens):", result["localStorage"])
-#         else:
-#             st.error(f"Relay login failed: {result.get('detail', result)}")
-
-
-
-
-# def page_relay_login():
-#     st.title("🚪 Secure Relay Login (sans révéler le mot de passe)")
-#     st.markdown("""
-# Ce mode permet au destinataire de se connecter à une app *classique* (username/password)
-# **sans jamais voir le mot de passe**.
-
-# Le backend utilise Playwright pour faire le login, puis stocke les cookies côté serveur
-# (temporairement). Ensuite, une extension Chrome récupère ces cookies via un `handoff session_id`
-# et les injecte automatiquement dans le navigateur.
-# """)
-
-#     if not st.session_state.get("jwt_token"):
-#         st.error("Vous devez être connecté (JWT ZKP) pour utiliser Relay Login.")
-#         return
-
-#     with st.form("relay_form"):
-#         token_input = st.text_input("🔑 Token de partage")
-#         submitted = st.form_submit_button("🔐 Login via Relay", use_container_width=True)
-
-#     if submitted and token_input:
-#         with st.spinner("Relay login..."):
-#             result = api_post(
-#                 "/sharing/relay-login",
-#                 {"token": token_input},
-#                 token=st.session_state.jwt_token,
-#             )
-
-#         if isinstance(result, dict) and "handoff" in result and result["handoff"].get("session_id"):
-#             st.success("✅ Relay login OK. Cookies stockés côté serveur (non affichés).")
-#             st.write("URL après login:", result.get("relay", {}).get("current_url"))
-#             st.write("Titre:", result.get("relay", {}).get("title"))
-
-#             session_id = result["handoff"]["session_id"]
-#             expires_in = result["handoff"].get("expires_in")
-
-#             handoff_url = f"{API_URL}/sharing/handoff/{session_id}"
-
-#             st.markdown("### Étape suivante (Injection automatique via extension Chrome)")
-#             st.write("Handoff URL (à fournir à l’extension) :")
-#             st.code(handoff_url, language="text")
-#             st.caption(f"Expire dans ~{expires_in} secondes.")
-
-#             st.warning("""
-# Streamlit ne peut pas injecter des cookies dans ton navigateur (limitation sécurité navigateur).
-# Installe l’extension Chrome fournie, colle cette handoff URL dans l’extension, puis clique l’icône.
-# L’extension va:
-# 1) télécharger les cookies depuis le backend,
-# 2) les injecter dans le domaine cible,
-# 3) ouvrir le site connecté.
-# """)
-#         else:
-#             st.error(f"❌ Relay login échoué: {result.get('detail', result)}")
-
-
-
 
 
 
@@ -1560,98 +1341,11 @@ def page_relay_login():
             st.code(handoff_url, language="text")
             st.caption(f"Expires in ~{expires_in} seconds.")
 
-
-
-#             st.warning("""
-# Streamlit cannot inject cookies into your browser (browser security limitation).
-# Install the provided Chrome extension, paste this handoff URL into the extension, then click the icon.
-# The extension will:
-# 1) download cookies from the backend,
-# 2) inject them into the target domain,
-# 3) open the logged-in site.
-# """)
-#             st.markdown(
-#     """
-# <div class="zkp-card">
-#   <div style="display:flex; gap:10px; flex-wrap:wrap;">
-#     <div class="zkp-badge">1) Relay Login</div>
-#     <div class="zkp-badge">2) Handoff Session</div>
-#     <div class="zkp-badge">3) Extension Injection</div>
-#     <div class="zkp-badge">4) Connected Profile</div>
-#   </div>
-# </div>
-# """,
-#     unsafe_allow_html=True,
-# )
             
         else:
             st.error(f"❌ Relay login failed: {result.get('detail', result)}")
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# def page_access_share():
-#     st.title("📩 Access a Shared Credential")
-#     st.markdown(
-#         """
-# Enter the received share token. The secret will be transmitted encrypted and decrypted
-# **only in your browser**.
-#         """
-#     )
-
-#     with st.form("access_form"):
-#         token_input = st.text_input("Share token", help="Token received from the owner")
-#         # requester_email = st.text_input("Your email")
-#         submitted = st.form_submit_button("Access", use_container_width=True)
-
-#     if submitted and token_input:
-#         with st.spinner("Zero‑Trust verification..."):
-#             result = api_post("/sharing/access", {
-#                 "token": token_input,
-#                 # "requester_email": requester_email,
-#             }, token=st.session_state.jwt_token)
-#             st.write("API response:", result)   # Temporary line to be removed later
-
-#         if "encrypted_payload" in result:
-#             try:
-#                 decrypted_secret = decrypt_from_share(result["encrypted_payload"], result["decryption_key"])
-#                 st.markdown(
-#                     f"""
-#                     <div class="zkp-success">
-#                       ✅ <strong>Access granted</strong> — Credential: <strong>{result['credential_name']}</strong><br/>
-#                       <span class="zkp-muted">Decrypted locally in the browser.</span>
-#                     </div>
-#                     <div class="zkp-card">
-#                       <strong>Service:</strong> {result.get('service_url', '—')}<br/>
-#                       <strong>Username:</strong> {result.get('username', '—')}<br/>
-#                       <strong>Secret:</strong> <code>{decrypted_secret}</code>
-#                     </div>
-#                     """,
-#                     unsafe_allow_html=True,
-#                 )
-#                 if result.get("permission") == "read_once":
-#                     st.warning("One‑time use token — invalidated after this access")
-#             except Exception as e:
-#                 st.error(f"Local decryption failed: {e}")
-#         else:
-#             st.error(f"Access denied: {result.get('detail', result)}")
 
 
 
@@ -1755,34 +1449,6 @@ Then you can use **Relay Login** to log into the target website.
 
 
 
-
-
-
-# def render_handoff_ui(service_url: str, session_id: str):
-#     st.success("✅ Relay login OK. Ready to inject cookies automatically (via extension).")
-#     st.write("Target service:", service_url)
-#     st.write("Handoff session id (expires quickly):", session_id)
-
-#     # This URL is what the extension will read from (backend endpoint)
-#     handoff_api_url = f"{API_URL}/sharing/handoff/{session_id}"
-
-#     st.markdown("### Step: click the button below (extension must be installed)")
-#     st.markdown(
-#         f"""
-# Open this in your browser (same browser where extension is installed):
-# - Handoff API URL (extension will fetch it): `{handoff_api_url}`
-# - Then extension will inject cookies into the target domain and open `{service_url}`
-#         """
-#     )
-
-#     # Just open target URL; extension will inject cookies before/after
-#     st.link_button("🚀 Open target service (extension will inject cookies)", service_url, use_container_width=True)
-#     st.code(handoff_api_url, language="text")
-
-
-
-
-
 def render_handoff_ui(service_url: str, session_id: str):
     handoff_api_url = f"{API_URL}/sharing/handoff/{session_id}"
     connect_url = make_extension_connect_url(handoff_api_url)
@@ -1846,6 +1512,101 @@ def render_handoff_ui(service_url: str, session_id: str):
 
 
 
+
+
+
+
+
+
+
+
+
+# def page_assisted_relay_login():
+#     st.title("👥 Owner‑Assisted Relay Login")
+#     st.markdown("""
+#     Utilisez ce mode si le site cible a un CAPTCHA, une 2FA, ou une procédure de connexion complexe.
+#     Le propriétaire sera notifié et devra se connecter manuellement. Sa session vous sera ensuite transmise.
+#     """)
+
+#     token_input = st.text_input("🔑 Share token")
+#     if st.button("Demander l'accès", use_container_width=True):
+#         if not token_input:
+#             st.error("Veuillez entrer un token")
+#             return
+#         with st.spinner("Création de la demande..."):
+#             resp = api_post("/sharing/assisted/request", {"share_token": token_input}, token=st.session_state.jwt_token)
+#         if "request_id" in resp:
+#             st.session_state.assist_request_id = resp["request_id"]
+#             st.success(f"Demande créée (ID: {resp['request_id']}). En attente de l'approbation du propriétaire...")
+#         else:
+#             st.error(f"Erreur: {resp.get('detail', resp)}")
+
+#     if "assist_request_id" in st.session_state:
+#         rid = st.session_state.assist_request_id
+#         status_resp = api_get(f"/sharing/assisted/{rid}/status", token=st.session_state.jwt_token)
+#         if status_resp.get("status") == "completed":
+#             handoff_session_id = status_resp["handoff_session_id"]
+#             handoff_url = f"{API_URL}/sharing/handoff/{handoff_session_id}"
+#             st.success("✅ Le propriétaire a terminé la connexion !")
+#             st.markdown("### Handoff URL (à utiliser dans l'extension)")
+#             st.code(handoff_url, language="text")
+#             st.info("Copiez cette URL dans l'extension Chrome pour injecter la session.")
+#         elif status_resp.get("status") == "expired":
+#             st.error("La demande a expiré. Veuillez recommencer.")
+#         else:
+#             st.info(f"Statut: {status_resp.get('status')} (en attente)")
+
+
+
+
+
+
+def page_assisted_relay_login():
+    st.title("👥 Owner‑Assisted Relay Login")
+    st.markdown("""
+    Utilisez ce mode si le site cible a un CAPTCHA, une 2FA, ou une procédure de connexion complexe.
+    Le propriétaire sera notifié et devra se connecter manuellement. Sa session vous sera ensuite transmise.
+    """)
+
+    token_input = st.text_input("🔑 Share token")
+    if st.button("📨 Request access", use_container_width=True):
+        if token_input:
+            resp = api_post("/sharing/assisted/request", {"share_token": token_input}, token=st.session_state.jwt_token)
+            if "request_id" in resp:
+                st.session_state.assist_request_id = resp["request_id"]
+                st.success(f"Demande créée (ID: {resp['request_id']}). En attente de l'approbation du propriétaire...")
+            else:
+                st.error(f"Erreur: {resp}")
+
+    # Afficher le statut si une demande est en cours
+    if "assist_request_id" in st.session_state:
+        rid = st.session_state.assist_request_id
+        status_resp = api_get(f"/sharing/assisted/{rid}/status", token=st.session_state.jwt_token)
+
+        if isinstance(status_resp, dict):
+            status = status_resp.get("status")
+            handoff_session_id = status_resp.get("handoff_session_id")
+
+            st.info(f"**Statut:** {status}")
+            if status == "completed" and handoff_session_id:
+                handoff_url = f"{API_URL}/sharing/handoff/{handoff_session_id}"
+                st.success("✅ Le propriétaire a terminé la connexion !")
+                st.markdown("### 🔗 Handoff URL (copiez‑la pour l’extension)")
+                st.code(handoff_url, language="text")
+                st.info("Collez cette URL dans l’extension (mode Handoff) et cliquez sur Connect.")
+            elif status == "expired":
+                st.warning("⏰ La demande a expiré. Veuillez en créer une nouvelle.")
+                if st.button("🗑️ Supprimer cette demande"):
+                    del st.session_state.assist_request_id
+                    st.rerun()
+            else:
+                # Bouton pour rafraîchir le statut sans recharger la page
+                if st.button("🔄 Rafraîchir le statut", use_container_width=True):
+                    st.rerun()
+        else:
+            st.error(f"Erreur lors de la récupération du statut: {status_resp}")
+    else:
+        st.info("Aucune demande en cours. Saisissez un share token et cliquez sur « Request access ».")
 
 
 

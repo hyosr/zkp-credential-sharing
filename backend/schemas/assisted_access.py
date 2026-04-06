@@ -3,6 +3,11 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 
+from pydantic import BaseModel
+
+class AssistedCompleteRequest(BaseModel):
+    proof: str
+
 class AssistedCreateRequest(BaseModel):
     token: str = Field(..., description="Share token/session token shown to recipient")
 
