@@ -626,6 +626,7 @@ class AssistedSessionPayload(BaseModel):
     cookies: list
     localStorage: str | None = None
     sessionStorage: str | None = None
+    current_url: str | None = None
 
 @router.post("/assisted/request")
 def assisted_create_request(
@@ -721,13 +722,15 @@ def assisted_submit_session(
     if req["status"] != "approved":
         raise HTTPException(400, f"Invalid status: {req['status']}")
 
+    current_url = session_data.current_url or req["service_url"]
+
     # Stocker la session dans le handoff store existant
     handoff_session_id = _handoff_store_put(
         service_url=req["service_url"],
         cookies=session_data.cookies,
         localStorage=session_data.localStorage,
         sessionStorage=session_data.sessionStorage,
-        current_url=req["service_url"],
+        current_url=current_url,
     )
     req["status"] = "completed"
     req["handoff_session_id"] = handoff_session_id

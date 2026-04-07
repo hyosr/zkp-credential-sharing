@@ -302,6 +302,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     chrome.runtime.sendMessage({ type: "START_OWNER_POLLING", baseUrl: normalizeBaseUrl(baseUrlEl.value), jwt: val });
   });
 
+  
+
 
   if (saved.baseUrl && saved.jwt) {
   chrome.runtime.sendMessage({ type: "START_OWNER_POLLING", baseUrl: saved.baseUrl, jwt: saved.jwt });
@@ -337,6 +339,55 @@ document.addEventListener("DOMContentLoaded", async () => {
   startPendingPolling();
   // Initial load
   loadPendingRequests();
+});
+
+
+
+
+
+
+
+
+
+
+
+// Capture and send session from current tab
+async function captureAndSend() {
+  const requestId = document.getElementById("captureRequestId").value.trim();
+  if (!requestId) {
+    alert("Please paste the Request ID");
+    return;
+  }
+  // Get current active tab (where the owner is logged in)
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.url) {
+    alert("No active tab found. Make sure you are on the logged‑in page.");
+    return;
+  }
+  const serviceUrl = tab.url;
+  // Send message to background to capture and submit
+  chrome.runtime.sendMessage({
+    type: "CAPTURE_SESSION",
+    tabId: tab.id,
+    serviceUrl: serviceUrl,
+    requestId: requestId
+  }, (response) => {
+    if (chrome.runtime.lastError) {
+      alert("Error: " + chrome.runtime.lastError.message);
+      return;
+    }
+    if (response && response.ok) {
+      alert("✅ Session captured and sent to recipient!");
+    } else {
+      alert("❌ Capture failed: " + (response?.error || "unknown"));
+    }
+  });
+}
+
+// Attach event listener after DOM is ready
+document.addEventListener("DOMContentLoaded", () => {
+  const captureBtn = document.getElementById("captureBtn");
+  if (captureBtn) captureBtn.addEventListener("click", captureAndSend);
 });
 
 

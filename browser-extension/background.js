@@ -188,47 +188,111 @@ async function apiPostJson(baseUrl, path, jwtToken, body) {
 }
 
 /* ---------- Mode 1: Handoff injection ---------- */
+// async function doHandoff(handoffUrl, opts = {}) {
+//   const delayBetweenCookies = Number(opts.delayBetweenCookies ?? 150);
+//   const delayAfterInject = Number(opts.delayAfterInject ?? 800);
+
+//   const data = await fetchJson(handoffUrl);
+
+//   const serviceUrl = data.service_url;
+//   // const currentUrl = data.current_url || serviceUrl;
+
+//   let currentUrl = data.current_url || serviceUrl;
+//   // If the URL contains "/login", strip it to the base origin
+//   if (currentUrl.includes('/login')) {
+//     const origin = new URL(serviceUrl).origin;
+//     currentUrl = origin + '/';
+//   }
+
+//   if (!serviceUrl) throw new Error("handoff response missing service_url");
+
+//   const cookies = Array.isArray(data.cookies) ? data.cookies : [];
+//   const localStorageObj = safeParseJsonObject(data.localStorage);
+//   const sessionStorageObj = safeParseJsonObject(data.sessionStorage);
+
+//   const targetHost = hostFromUrl(currentUrl || serviceUrl);
+//   const serviceOrigin = originFromUrl(currentUrl || serviceUrl);
+
+//   // Filter only target-domain cookies
+//   const filteredCookies = cookies.filter((c) => domainMatches(c.domain, targetHost));
+
+//   // Inject cookies (slow)
+//   await injectCookies(serviceOrigin, filteredCookies, {
+//     delayBeforeMs: 300,
+//     delayBetweenMs: delayBetweenCookies,
+//     delayAfterMs: 400,
+//   });
+
+//   // Let Chrome apply them
+//   await sleep(delayAfterInject);
+
+//   // Open target page
+//   const tab = await chrome.tabs.create({ url: currentUrl, active: true });
+//   await waitForTabComplete(tab.id, 15000);
+
+//   // Inject storage + reload
+//   await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
+
+//   // Optional: wait reload complete
+//   await waitForTabComplete(tab.id, 15000);
+// }
+
+
+
+
+
 async function doHandoff(handoffUrl, opts = {}) {
-  const delayBetweenCookies = Number(opts.delayBetweenCookies ?? 150);
-  const delayAfterInject = Number(opts.delayAfterInject ?? 800);
-
   const data = await fetchJson(handoffUrl);
-
   const serviceUrl = data.service_url;
-  const currentUrl = data.current_url || serviceUrl;
+  let currentUrl = data.current_url || serviceUrl;
 
-  if (!serviceUrl) throw new Error("handoff response missing service_url");
+  // Force redirect to base domain if the current URL is a login page
+  // if (currentUrl.includes('/login')) {
+  //   const origin = new URL(serviceUrl).origin;
+  //   currentUrl = origin + '/';
+  // }
 
-  const cookies = Array.isArray(data.cookies) ? data.cookies : [];
+  const cookies = data.cookies || [];
   const localStorageObj = safeParseJsonObject(data.localStorage);
   const sessionStorageObj = safeParseJsonObject(data.sessionStorage);
 
-  const targetHost = hostFromUrl(currentUrl || serviceUrl);
-  const serviceOrigin = originFromUrl(currentUrl || serviceUrl);
+  const targetHost = hostFromUrl(currentUrl);
+  const serviceOrigin = originFromUrl(currentUrl);
 
-  // Filter only target-domain cookies
-  const filteredCookies = cookies.filter((c) => domainMatches(c.domain, targetHost));
+  // Inject cookies
+  for (const c of cookies) {
+    if (domainMatches(c.domain, targetHost)) {
+      await setOneCookie(serviceOrigin, c);
+      await sleep(100);
+    }
+  }
 
-  // Inject cookies (slow)
-  await injectCookies(serviceOrigin, filteredCookies, {
-    delayBeforeMs: 300,
-    delayBetweenMs: delayBetweenCookies,
-    delayAfterMs: 400,
-  });
-
-  // Let Chrome apply them
-  await sleep(delayAfterInject);
-
-  // Open target page
+  // Open tab with the corrected URL
   const tab = await chrome.tabs.create({ url: currentUrl, active: true });
   await waitForTabComplete(tab.id, 15000);
 
-  // Inject storage + reload
+  // Inject storage and reload
   await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
-
-  // Optional: wait reload complete
   await waitForTabComplete(tab.id, 15000);
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* ---------- Mode 2: Assisted (safe) ---------- */
 let assistedPollTimer = null;
@@ -236,6 +300,7 @@ let assistedPollTimer = null;
 async function assistedStartFlow(baseUrl, jwtToken, shareToken) {
   // Create assisted request
   const created = await apiPostJson(baseUrl, "/sharing/assisted/request", jwtToken, { share_token: shareToken });
+  // const created = await apiPostJson(baseUrl, "/sharing/assisted/request", jwtToken, { token: shareToken });
   const requestId = created.request_id;
 
   await chrome.storage.local.set({ assistedRequestId: requestId });
@@ -492,46 +557,6 @@ if (chrome.notifications?.onClicked) {
 
 
 
-// // ========== OWNER: Capture session after manual login ==========
-// async function captureCurrentSession(tabId, serviceUrl, requestId) {
-//   // Récupérer les cookies pour le domaine
-//   const cookies = await chrome.cookies.getAll({ url: serviceUrl });
-//   // Exécuter dans la page pour récupérer localStorage et sessionStorage
-//   const injectionResult = await chrome.scripting.executeScript({
-//     target: { tabId },
-//     func: () => {
-//       const ls = {};
-//       for (let i = 0; i < localStorage.length; i++) {
-//         const key = localStorage.key(i);
-//         ls[key] = localStorage.getItem(key);
-//       }
-//       const ss = {};
-//       for (let i = 0; i < sessionStorage.length; i++) {
-//         const key = sessionStorage.key(i);
-//         ss[key] = sessionStorage.getItem(key);
-//       }
-//       return { localStorage: ls, sessionStorage: ss };
-//     }
-//   });
-//   const { localStorage, sessionStorage } = injectionResult[0].result;
-
-//   // Envoyer au backend
-//   const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
-//   const response = await fetch(`${baseUrl}/sharing/assisted/${requestId}/session`, {
-//     method: "POST",
-//     headers: {
-//       "Content-Type": "application/json",
-//       Authorization: `Bearer ${jwt}`,
-//     },
-//     body: JSON.stringify({
-//       cookies: cookies,
-//       localStorage: JSON.stringify(localStorage),
-//       sessionStorage: JSON.stringify(sessionStorage),
-//     }),
-//   });
-//   if (!response.ok) throw new Error("Failed to submit session");
-//   return await response.json();
-// }
 
 
 
@@ -543,6 +568,20 @@ if (chrome.notifications?.onClicked) {
 // ========== OWNER: Capture session after manual login ==========
 async function captureCurrentSession(tabId, serviceUrl, requestId) {
   // Récupérer les cookies pour le domaine
+
+
+
+  let targetUrl = serviceUrl;
+  if (targetUrl.includes('/login') || targetUrl.includes('/auth')) {
+    const origin = new URL(targetUrl).origin;
+    targetUrl = origin + '/';
+    console.log("URL corrigée pour handoff:", targetUrl);
+  }
+
+
+
+
+
   const cookies = await chrome.cookies.getAll({ url: serviceUrl });
   // Exécuter dans la page pour récupérer localStorage et sessionStorage
   const injectionResult = await chrome.scripting.executeScript({
@@ -574,6 +613,7 @@ async function captureCurrentSession(tabId, serviceUrl, requestId) {
       cookies: cookies,
       localStorage: JSON.stringify(localStorage),
       sessionStorage: JSON.stringify(sessionStorage),
+      current_url: targetUrl 
     }),
   });
   if (!response.ok) throw new Error("Failed to submit session");
@@ -584,93 +624,6 @@ async function captureCurrentSession(tabId, serviceUrl, requestId) {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-// /* ---------- Messages from popup ---------- */
-// chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-//   // Existing mode: injection from handoff URL
-//   if (msg?.type === "RUN_HANDOFF") {
-//     (async () => {
-//       try {
-//         const url = msg.handoffUrl || (await chrome.storage.local.get(["handoffUrl"])).handoffUrl;
-//         if (!url) throw new Error("Missing handoffUrl");
-//         await doHandoff(url, msg.opts || {});
-//         sendResponse({ ok: true });
-//       } catch (e) {
-//         sendResponse({ ok: false, error: String(e?.message || e) });
-//       }
-//     })();
-//     return true;
-//   }
-
-
-
-
-
-
-//   if (msg.type === "CAPTURE_SESSION") {
-//       (async () => {
-//         try {
-//           const { pendingCaptureRequestId, pendingCaptureTabId } = await chrome.storage.local.get([
-//             "pendingCaptureRequestId", "pendingCaptureTabId"
-//           ]);
-//           if (!pendingCaptureRequestId || !pendingCaptureTabId) {
-//             throw new Error("No pending capture request. Did you approve a request?");
-//           }
-//           await captureCurrentSession(pendingCaptureTabId, pendingCaptureRequestId);
-//           // Nettoyer
-//           await chrome.storage.local.remove(["pendingCaptureRequestId", "pendingCaptureTabId"]);
-//           chrome.action.setBadgeText({ text: "" });
-//           sendResponse({ ok: true });
-//         } catch (e) {
-//           console.error("Capture failed:", e);
-//           sendResponse({ ok: false, error: e.message });
-//         }
-//       })();
-//       return true; // indique que la réponse sera asynchrone
-//     }
-
-
-
-
-
-
-
-
-
-//   // New mode: assisted recipient flow (safe)
-//   if (msg?.type === "ASSISTED_START") {
-//     (async () => {
-//       try {
-//         const baseUrl = msg.baseUrl || (await chrome.storage.local.get(["baseUrl"])).baseUrl;
-//         const jwt = msg.jwt || (await chrome.storage.local.get(["jwt"])).jwt;
-//         if (!baseUrl) throw new Error("Missing baseUrl");
-//         if (!jwt) throw new Error("Missing jwt");
-//         if (!msg.shareToken) throw new Error("Missing shareToken");
-
-//         await chrome.storage.local.set({ baseUrl, jwt });
-
-//         // Start owner polling too (if user is owner in another session, they will see pending)
-//         ownerStartPolling(baseUrl, jwt).catch(() => {});
-
-//         const r = await assistedStartFlow(baseUrl, jwt, msg.shareToken);
-//         sendResponse({ ok: true, requestId: r.requestId });
-//       } catch (e) {
-//         sendResponse({ ok: false, error: String(e?.message || e) });
-//       }
-//     })();
-//     return true;
-//   }
-// });
 
 
 
@@ -817,363 +770,6 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
   }
   
 })();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// function sleep(ms) {
-//   return new Promise((resolve) => setTimeout(resolve, ms));
-// }
-
-
-
-
-// function originFromUrl(u) {
-//   try {
-//     const x = new URL(u);
-//     return `${x.protocol}//${x.host}/`;
-//   } catch {
-//     return u;
-//   }
-// }
-
-// function hostFromUrl(u) {
-//   try { return new URL(u).hostname.toLowerCase(); } catch { return ""; }
-// }
-
-// function normalizeDomain(d) {
-//   return (d || "").toLowerCase().replace(/^\./, "");
-// }
-
-// function domainMatches(cookieDomain, targetHost) {
-//   const cd = normalizeDomain(cookieDomain);
-//   const h = normalizeDomain(targetHost);
-//   return cd === h || h.endsWith("." + cd) || cd.endsWith("." + h);
-// }
-
-
-
-
-// function waitForTabComplete(tabId, timeoutMs = 15000) {
-//   return new Promise((resolve) => {
-//     const t0 = Date.now();
-
-//     function cleanup() {
-//       chrome.tabs.onUpdated.removeListener(onUpdated);
-//     }
-
-//     function done() {
-//       cleanup();
-//       resolve();
-//     }
-
-//     function onUpdated(id, info) {
-//       if (id === tabId && info.status === "complete") return done();
-//       if (Date.now() - t0 > timeoutMs) return done();
-//     }
-
-//     chrome.tabs.onUpdated.addListener(onUpdated);
-//     setTimeout(done, timeoutMs);
-//   });
-// }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// async function fetchJson(url) {
-//   const r = await fetch(url, { method: "GET" });
-//   if (!r.ok) {
-//     const t = await r.text();
-//     throw new Error(`Fetch failed ${r.status}: ${t}`);
-//   }
-//   return await r.json();
-// }
-
-// function normalizeSameSite(v) {
-//   if (!v) return "lax";
-//   const s = String(v).toLowerCase();
-//   if (s === "strict") return "strict";
-//   if (s === "none") return "no_restriction";
-//   return "lax";
-// }
-
-// function buildCookieSetUrl(cookie, serviceUrl) {
-//   const u = new URL(serviceUrl);
-//   const domain = (cookie.domain || u.hostname).replace(/^\./, "");
-//   return `${u.protocol}//${domain}/`;
-// }
-
-// function safeParseJsonObject(s) {
-//   if (!s) return null;
-//   try {
-//     const obj = JSON.parse(s);
-//     return obj && typeof obj === "object" ? obj : null;
-//   } catch {
-//     return null;
-//   }
-// }
-
-// async function setOneCookie(serviceUrl, c, forcedDomain = null) {
-//   const details = {
-//     url: buildCookieSetUrl(c, serviceUrl),
-//     name: c.name,
-//     value: c.value,
-//     path: c.path || "/",
-//     httpOnly: !!c.httpOnly,
-//     secure: !!c.secure,
-//     sameSite: normalizeSameSite(c.sameSite),
-//   };
-
-//   const domain = forcedDomain || c.domain;
-//   if (domain) details.domain = domain;
-
-//   if (typeof c.expires === "number" && c.expires > 0) {
-//     details.expirationDate = c.expires;
-//   }
-
-//   await chrome.cookies.set(details);
-// }
-
-
-
-
-
-
-
-
-// async function injectCookies(serviceUrl, cookies, opts = {}) {
-//   const delayBeforeMs = Number(opts.delayBeforeMs ?? 300);
-//   const delayBetweenMs = Number(opts.delayBetweenMs ?? 120);
-//   const delayAfterMs = Number(opts.delayAfterMs ?? 400);
-
-//   const list = Array.isArray(cookies) ? cookies : [];
-
-//   // small pause before starting
-//   await sleep(delayBeforeMs);
-
-//   for (const c of list) {
-//     await setOneCookie(serviceUrl, c);
-
-//     // keep your recolyse special case if you need it
-//     if (c.name === "token" && c.domain === "recolyse.com") {
-//       await setOneCookie(serviceUrl, c, ".recolyse.com");
-//     }
-
-//     // pause between cookies
-//     await sleep(delayBetweenMs);
-//   }
-
-//   // pause after all cookies are set
-//   await sleep(delayAfterMs);
-// }
-
-
-
-
-
-
-// async function injectStorageAndReload(tabId, localStorageObj, sessionStorageObj) {
-//   await chrome.scripting.executeScript({
-//     target: { tabId },
-//     func: (ls, ss) => {
-//       try {
-//         if (ls && typeof ls === "object") {
-//           for (const [k, v] of Object.entries(ls)) localStorage.setItem(k, v);
-//         }
-//         if (ss && typeof ss === "object") {
-//           for (const [k, v] of Object.entries(ss)) sessionStorage.setItem(k, v);
-//         }
-//       } catch (e) {
-//         console.error("Storage injection error:", e);
-//       }
-//     },
-//     args: [localStorageObj, sessionStorageObj],
-//   });
-
-//   await new Promise((resolve) => setTimeout(resolve, 800));
-//   await chrome.tabs.reload(tabId);
-// }
-
-
-
-
-
-
-// async function doHandoff(handoffUrl, opts = {}) {
-//   const delayBetweenCookies = Number(opts.delayBetweenCookies ?? 150);
-//   const delayAfterInject = Number(opts.delayAfterInject ?? 800);
-
-//   const data = await fetchJson(handoffUrl);
-
-//   const serviceUrl = data.service_url;
-//   const currentUrl = data.current_url || serviceUrl;
-
-//   const cookies = Array.isArray(data.cookies) ? data.cookies : [];
-//   const localStorageObj = safeParseJsonObject(data.localStorage);
-//   const sessionStorageObj = safeParseJsonObject(data.sessionStorage);
-
-//   const targetHost = hostFromUrl(currentUrl || serviceUrl);
-//   const cookieScopeUrl = originFromUrl(currentUrl || serviceUrl);
-
-//   // Inject only cookies for the target site (avoid 3rd-party noise)
-//   const filteredCookies = cookies.filter((c) => domainMatches(c.domain, targetHost));
-
-//   // 1) inject cookies slowly
-//   for (const c of filteredCookies) {
-//     await setOneCookie(cookieScopeUrl, c);
-//     await sleep(delayBetweenCookies);
-//   }
-
-//   // 2) wait a bit so browser applies cookies before opening target
-//   await sleep(delayAfterInject);
-
-//   // 3) open target page
-//   const tab = await chrome.tabs.create({ url: currentUrl, active: true });
-
-//   // Wait until the page actually loads before injecting storage
-//   await waitForTabComplete(tab.id, 15000);
-
-//   // 4) inject storage (best-effort)
-//   // await injectStorageIntoTab(tab.id, localStorageObj, sessionStorageObj);
-//   await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
-//   // 5) reload so site re-reads cookies/storage
-//   // await chrome.tabs.reload(tab.id);
-// }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// // Receive message from popup
-// chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-//   if (msg?.type === "RUN_HANDOFF") {
-//     (async () => {
-//       try {
-//         const url = msg.handoffUrl || (await chrome.storage.local.get(["handoffUrl"])).handoffUrl;
-//         if (!url) throw new Error("Missing handoffUrl");
-//         // await doHandoff(url);
-//         await doHandoff(msg.handoffUrl, msg.opts || {});
-//         sendResponse({ ok: true });
-//       } catch (e) {
-//         sendResponse({ ok: false, error: String(e?.message || e) });
-//       }
-//     })();
-//     return true; // keep message channel open for async response
-//   }
-// });
-
-
-
-
-
-
-// function isBridgeUrl(url) {
-//   try {
-//     const u = new URL(url);
-//     return (
-//       u.origin === "http://localhost:8001" &&
-//       u.pathname === "/extension/connect" &&
-//       u.searchParams.get("handoff")
-//     );
-//   } catch {
-//     return false;
-//   }
-// }
-
-// chrome.webNavigation.onCommitted.addListener(async (details) => {
-//   if (details.frameId !== 0) return; // top frame only
-//   if (!isBridgeUrl(details.url)) return;
-
-//   const u = new URL(details.url);
-//   const handoffUrl = u.searchParams.get("handoff");
-
-//   try {
-//     // Save for history and run immediately
-//     await chrome.storage.local.set({ handoffUrl });
-//     await doHandoff(handoffUrl);
-
-//     // optional: close the bridge tab
-//     chrome.tabs.remove(details.tabId);
-//   } catch (e) {
-//     console.error("Bridge handoff failed:", e);
-//   }
-// });
-
-
-
 
 
 

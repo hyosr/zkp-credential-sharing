@@ -497,7 +497,6 @@ def main():
         "📩 Access a Share",
         "🚪 Relay Login (no password reveal)",
         "👥 Assisted Relay Login",
-        "🧩 Assisted Login (CAPTCHA/2FA supported)",
         "🛎️ Owner — Assisted Requests",
         # "🔐 Keycloak Passwordless Share (Device Flow)",
         "📋 Audit Trail",
@@ -531,8 +530,7 @@ def main():
         page_relay_login()
     elif menu == "🔐 Keycloak Passwordless Share (Device Flow)":
         page_keycloak_device_flow()
-    elif menu == "🧩 Assisted Login (CAPTCHA/2FA supported)":
-        page_assisted_login()
+    
     elif menu == "🛎️ Owner — Assisted Requests":
         page_owner_assisted_requests()
 
@@ -638,130 +636,103 @@ def page_login():
 
 
 
-
-
-
-def page_assisted_login():
-    st.title("🧩 Assisted Login (Owner approval — CAPTCHA/2FA supported)")
-    st.markdown(
-        """
-This mode avoids browser cookie injection between users.
-The **owner** completes the CAPTCHA/2FA on **your site**, then the backend issues a short‑lived **handoff_token**.
-The recipient opens `/handoff` to create a first‑party session cookie.
-        """
-    )
-
-    token = st.session_state.get("jwt_token")
-    if not token:
-        st.error("You must be logged in (JWT ZKP) to use Assisted Login.")
-        return
-
-    st.markdown("---")
-    st.subheader("Recipient — Request owner approval")
-
-    with st.form("assisted_request_form"):
-        share_token = st.text_input("🔑 Share token (received from owner)")
-        # Optional: if your backend can infer service_url from the credential, you don't need override.
-        service_url_override = st.text_input(
-            "Service URL override (optional)",
-            help="Only needed if backend can't infer target URL from the shared credential.",
-            value="",
-        )
-        submitted = st.form_submit_button("📨 Request assisted login", use_container_width=True)
-
-    if submitted:
-        if not share_token.strip():
-            st.warning("Paste the share token.")
-            return
-
-        payload = {"token": share_token.strip()}
-        if service_url_override.strip():
-            payload["service_url_override"] = service_url_override.strip()
-
-        with st.spinner("Creating assisted request..."):
-            r = api_post_strict("/sharing/assisted/request", payload, token=token, timeout=30)
-
-        if r.get("error"):
-            st.error(f"Request failed: {r.get('detail')}")
-            return
-
-        st.session_state["assisted_request_id"] = r.get("request_id")
-        st.session_state["assisted_expires_at"] = r.get("expires_at")
-        st.session_state["assisted_service_url"] = r.get("service_url")
-        st.success(f"✅ Request created: {st.session_state['assisted_request_id']}")
-        st.info("Now wait for owner approval. This page will poll status.")
-
-    rid = st.session_state.get("assisted_request_id")
-    if not rid:
-        st.markdown("---")
-        st.caption("No active request yet.")
-        return
-
-    st.markdown("---")
-    st.subheader("Status")
-    st.write("Request ID:", rid)
-    st.write("Service URL:", st.session_state.get("assisted_service_url"))
-    exp = st.session_state.get("assisted_expires_at")
-    if exp:
-        st.caption("Expires at: " + time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(exp)))
-
-    colA, colB, colC = st.columns([1, 1, 1], gap="small")
-    poll_now = colA.button("🔄 Poll now", use_container_width=True)
-    auto_poll = colB.toggle("Auto-poll (2s)", value=True)
-    clear_req = colC.button("🧹 Clear", use_container_width=True)
-
-    if clear_req:
-        for k in ["assisted_request_id", "assisted_expires_at", "assisted_service_url"]:
-            st.session_state.pop(k, None)
-        st.rerun()
-
-    # Poll logic
-    def poll_status_once():
-        return api_get_strict(f"/sharing/assisted/{rid}/status", token=token, timeout=20)
-
-    status_box = st.empty()
-    actions_box = st.empty()
-
-    if poll_now and not auto_poll:
-        s = poll_status_once()
-        if s.get("error"):
-            status_box.error(f"Status error: {s.get('detail')}")
-        else:
-            status_box.write(s)
-        return
-
-    if auto_poll:
-        # Streamlit-friendly loop with stop condition: reruns are costly, so keep it short
-        # We'll poll a few times per render; user can keep page open.
-        for _ in range(20):  # ~40 seconds max per render
-            s = poll_status_once()
-            if s.get("error"):
-                status_box.error(f"Status error: {s.get('detail')}")
-                break
-
-            status_box.write({"status": s.get("status"), "expires_at": s.get("expires_at")})
-
-            if s.get("status") == "completed" and s.get("handoff_token"):
-                handoff_url = f"{API_URL}/handoff?handoff_token={urllib.parse.quote(s['handoff_token'], safe='')}&redirect_to=/app"
-                actions_box.success("✅ Approved. Open handoff to create session cookie on your site.")
-                actions_box.code(handoff_url, language="text")
-                st.link_button("🚀 Open connected session (via /handoff)", handoff_url, use_container_width=True)
-
-                # Optional: also provide extension-bridge URL if you want one-click through extension
-                # bridge = make_extension_connect_url(handoff_url)
-                # st.link_button("Open via extension bridge", bridge)
-
-                break
-
-            if s.get("status") in ("expired", "rejected"):
-                actions_box.error(f"Flow ended: {s.get('status')}")
-                break
-
-            time.sleep(2)
-
-
-
         
+
+
+
+def page_assisted_relay_login():
+    st.title("👥 Owner‑Assisted Relay Login")
+    st.markdown("""
+    Utilisez ce mode si le site cible a un CAPTCHA, une 2FA, ou une procédure de connexion complexe.
+    Le propriétaire sera notifié et devra se connecter manuellement. Sa session vous sera ensuite transmise.
+    """)
+
+    token_input = st.text_input("🔑 Share token")
+    if st.button("📨 Request access", use_container_width=True):
+        if token_input:
+            resp = api_post("/sharing/assisted/request", {"share_token": token_input}, token=st.session_state.jwt_token)
+            if "request_id" in resp:
+                st.session_state.assist_request_id = resp["request_id"]
+                st.success(f"Demande créée (ID: {resp['request_id']}). En attente de l'approbation du propriétaire...")
+            else:
+                st.error(f"Erreur: {resp}")
+
+    if "assist_request_id" in st.session_state:
+        rid = st.session_state.assist_request_id
+        status_resp = api_get(f"/sharing/assisted/{rid}/status", token=st.session_state.jwt_token)
+
+        if isinstance(status_resp, dict):
+            status = status_resp.get("status")
+            handoff_session_id = status_resp.get("handoff_session_id")
+            st.info(f"**Statut:** {status}")
+            if status == "completed" and handoff_session_id:
+                handoff_url = f"{API_URL}/sharing/handoff/{handoff_session_id}"
+                st.success("✅ Le propriétaire a terminé la connexion !")
+                st.markdown("### 🔗 Handoff URL (copiez‑la pour l’extension)")
+                st.code(handoff_url, language="text")
+                st.info("Collez cette URL dans l’extension (mode Handoff) et cliquez sur Connect.")
+            elif status == "expired":
+                st.warning("⏰ La demande a expiré. Veuillez en créer une nouvelle.")
+                if st.button("🗑️ Supprimer cette demande"):
+                    del st.session_state.assist_request_id
+                    st.rerun()
+            else:
+                if st.button("🔄 Rafraîchir le statut", use_container_width=True):
+                    st.rerun()
+        else:
+            st.error(f"Erreur lors de la récupération du statut: {status_resp}")
+    else:
+        st.info("Aucune demande en cours. Saisissez un share token et cliquez sur « Request access ».")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# def page_owner_assisted_requests():
+#     st.title("👑 Owner — Assisted Requests")
+#     st.markdown("Pending requests from recipients. Click 'Approve and assist' to help them log in.")
+#     token = st.session_state.jwt_token
+#     if not token:
+#         st.error("Not logged in")
+#         return
+
+#     pending = api_get("/sharing/assisted/pending", token=token)
+
+#     if isinstance(pending, dict) and pending.get("error"):
+#         st.error(f"API error: {pending.get('error')}")
+#         return
+#     if not isinstance(pending, list):
+#         st.error(f"Unexpected response: {pending}")
+#         return
+#     if not pending:
+#         st.info("No pending assisted requests.")
+#         return
+
+#     for req in pending:
+#         with st.expander(f"Request from {req.get('recipient_email')} for {req.get('service_url')}"):
+#             st.write(f"**Request ID:** {req.get('request_id')}")
+#             st.write(f"**Expires:** {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(req.get('expires_at')))}")
+#             if st.button("Approve and assist", key=f"approve_{req.get('request_id')}"):
+#                 resp = api_post(f"/sharing/assisted/{req.get('request_id')}/approve", {}, token=token)
+#                 if resp.get("assist_login_url"):
+#                     st.success("Approved! Opening login page...")
+#                     st.markdown(f"[Open login page]({resp['assist_login_url']})")
+#                     # Optionally display the request ID for the owner to copy into the extension
+#                     st.code(f"Request ID: {req.get('request_id')}", language="text")
+#                 else:
+#                     st.error(f"Approval failed: {resp.get('detail', resp)}")
+
+
+
 
 
 
@@ -777,11 +748,9 @@ def page_owner_assisted_requests():
 
     pending = api_get("/sharing/assisted/pending", token=token)
 
-    # Gérer les erreurs : si c'est un dict avec "error"
     if isinstance(pending, dict) and pending.get("error"):
         st.error(f"API error: {pending.get('error')}")
         return
-    # Si ce n'est pas une liste, erreur inattendue
     if not isinstance(pending, list):
         st.error(f"Unexpected response: {pending}")
         return
@@ -791,19 +760,28 @@ def page_owner_assisted_requests():
 
     for req in pending:
         with st.expander(f"Request from {req.get('recipient_email')} for {req.get('service_url')}"):
-            st.write(f"**Request ID:** {req.get('request_id')}")
+            st.write(f"**Request ID:** `{req.get('request_id')}`")
             st.write(f"**Expires:** {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(req.get('expires_at')))}")
             if st.button("Approve and assist", key=f"approve_{req.get('request_id')}"):
                 resp = api_post(f"/sharing/assisted/{req.get('request_id')}/approve", {}, token=token)
                 if resp.get("assist_login_url"):
-                    st.success("Approved! Opening login page...")
-                    st.markdown(f"[Open login page]({resp['assist_login_url']})")
+                    st.success("✅ Approved! Login page opened below.")
+                    st.markdown(f"🔗 [Open login page]({resp['assist_login_url']})")
+                    st.info("📋 **Copy this Request ID for the extension:**")
+                    st.code(req.get('request_id'), language="text")
+                    st.warning("After manual login, open the extension, paste this Request ID, and click 'Capture and send session'.")
                 else:
                     st.error(f"Approval failed: {resp.get('detail', resp)}")
 
 
 
 
+
+
+
+
+
+                    
 
 
 
@@ -1555,59 +1533,6 @@ def render_handoff_ui(service_url: str, session_id: str):
 #             st.error("La demande a expiré. Veuillez recommencer.")
 #         else:
 #             st.info(f"Statut: {status_resp.get('status')} (en attente)")
-
-
-
-
-
-
-def page_assisted_relay_login():
-    st.title("👥 Owner‑Assisted Relay Login")
-    st.markdown("""
-    Utilisez ce mode si le site cible a un CAPTCHA, une 2FA, ou une procédure de connexion complexe.
-    Le propriétaire sera notifié et devra se connecter manuellement. Sa session vous sera ensuite transmise.
-    """)
-
-    token_input = st.text_input("🔑 Share token")
-    if st.button("📨 Request access", use_container_width=True):
-        if token_input:
-            resp = api_post("/sharing/assisted/request", {"share_token": token_input}, token=st.session_state.jwt_token)
-            if "request_id" in resp:
-                st.session_state.assist_request_id = resp["request_id"]
-                st.success(f"Demande créée (ID: {resp['request_id']}). En attente de l'approbation du propriétaire...")
-            else:
-                st.error(f"Erreur: {resp}")
-
-    # Afficher le statut si une demande est en cours
-    if "assist_request_id" in st.session_state:
-        rid = st.session_state.assist_request_id
-        status_resp = api_get(f"/sharing/assisted/{rid}/status", token=st.session_state.jwt_token)
-
-        if isinstance(status_resp, dict):
-            status = status_resp.get("status")
-            handoff_session_id = status_resp.get("handoff_session_id")
-
-            st.info(f"**Statut:** {status}")
-            if status == "completed" and handoff_session_id:
-                handoff_url = f"{API_URL}/sharing/handoff/{handoff_session_id}"
-                st.success("✅ Le propriétaire a terminé la connexion !")
-                st.markdown("### 🔗 Handoff URL (copiez‑la pour l’extension)")
-                st.code(handoff_url, language="text")
-                st.info("Collez cette URL dans l’extension (mode Handoff) et cliquez sur Connect.")
-            elif status == "expired":
-                st.warning("⏰ La demande a expiré. Veuillez en créer une nouvelle.")
-                if st.button("🗑️ Supprimer cette demande"):
-                    del st.session_state.assist_request_id
-                    st.rerun()
-            else:
-                # Bouton pour rafraîchir le statut sans recharger la page
-                if st.button("🔄 Rafraîchir le statut", use_container_width=True):
-                    st.rerun()
-        else:
-            st.error(f"Erreur lors de la récupération du statut: {status_resp}")
-    else:
-        st.info("Aucune demande en cours. Saisissez un share token et cliquez sur « Request access ».")
-
 
 
 
