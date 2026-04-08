@@ -20,6 +20,27 @@ from backend.schemas.assisted_access import (
     AssistedStatusOut,
 )
 
+
+import json
+
+
+
+import asyncio
+from playwright.async_api import async_playwright
+
+# sessions Playwright en mémoire (MVP)
+# { request_id: { "pw":..., "browser":..., "context":..., "page":..., "service_url":..., "owner_id":..., "recipient_id":... } }
+ASSISTED_PW_SESSIONS: dict[str, dict] = {}
+
+
+
+
+
+
+
+
+
+
 router = APIRouter(prefix="/sharing/assisted", tags=["Assisted Access"])
 
 REQUEST_TTL_SECONDS = 10 * 60
@@ -30,6 +51,34 @@ JWT_ALGORITHM = "HS256"
 
 # Simple shared secret for MVP (put in .env)
 ASSIST_COMPLETE_SECRET = os.getenv("ASSIST_COMPLETE_SECRET", "CHANGE_ME")
+
+
+
+
+
+
+
+
+
+
+
+async def _start_owner_browser_for_request(request_id: str, service_url: str):
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch(headless=False)
+    context = await browser.new_context()
+    page = await context.new_page()
+    await page.goto(service_url, wait_until="domcontentloaded")
+    ASSISTED_PW_SESSIONS[request_id] = {
+        "pw": pw,
+        "browser": browser,
+        "context": context,
+        "page": page,
+        "service_url": service_url,
+    }
+
+
+
+
 
 
 def _sign_handoff(payload: dict) -> str:
@@ -155,16 +204,35 @@ def approve(
     r.status = "approved"
     db.commit()
 
-    assist_login_url = r.service_url
-    try:
-        u = urllib.parse.urlparse(r.service_url)
-        q = dict(urllib.parse.parse_qsl(u.query))
-        q["assist_request_id"] = str(r.id)
-        assist_login_url = urllib.parse.urlunparse(u._replace(query=urllib.parse.urlencode(q)))
-    except Exception:
-        # fallback: append as query
-        sep = "&" if "?" in r.service_url else "?"
-        assist_login_url = f"{r.service_url}{sep}assist_request_id={r.id}"
+    # assist_login_url = r.service_url
+    # try:
+    #     u = urllib.parse.urlparse(r.service_url)
+    #     q = dict(urllib.parse.parse_qsl(u.query))
+    #     q["assist_request_id"] = str(r.id)
+    #     assist_login_url = urllib.parse.urlunparse(u._replace(query=urllib.parse.urlencode(q)))
+    # except Exception:
+    #     # fallback: append as query
+    #     sep = "&" if "?" in r.service_url else "?"
+    #     assist_login_url = f"{r.service_url}{sep}assist_request_id={r.id}"
+
+
+
+    # lance Playwright pour owner (login manuel)
+    asyncio.create_task(_start_owner_browser_for_request(str(request_id), request.service_url))
+
+    return {
+        "request_id": request.id,
+        "status": "approved",
+        "assist_login_url": request.service_url,  # info UI uniquement
+        "expires_at": request.expires_at,
+}
+
+
+
+
+
+
+
 
     return AssistedApproveOut(
         request_id=r.id,
@@ -263,6 +331,77 @@ def status(
 
 
 
+
+
+
+@router.post("/{request_id}/finish")
+async def assisted_finish_login(
+    request_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    r = db.query(AssistedAccessRequest).filter(AssistedAccessRequest.id == request_id).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if r.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed")
+    if r.status not in ("approved", "pending"):
+        raise HTTPException(status_code=400, detail=f"Invalid status: {r.status}")
+
+    sess = ASSISTED_PW_SESSIONS.get(str(request_id))
+    if not sess:
+        raise HTTPException(status_code=404, detail="Playwright session not found for this request")
+
+    context = sess["context"]
+    page = sess["page"]
+
+    cookies = await context.cookies()
+
+    local_storage = await page.evaluate(
+        "() => { const o={}; for (let i=0;i<localStorage.length;i++){const k=localStorage.key(i); o[k]=localStorage.getItem(k);} return o; }"
+    )
+    session_storage = await page.evaluate(
+        "() => { const o={}; for (let i=0;i<sessionStorage.length;i++){const k=sessionStorage.key(i); o[k]=sessionStorage.getItem(k);} return o; }"
+    )
+
+    # crée handoff session comme dans ton flow existant
+    handoff_session_id = secrets.token_urlsafe(24)
+
+    # IMPORTANT: adapte ceci à ton store existant de handoff
+    from backend.routers.sharing import HANDOFF_STORE  # si tu utilises déjà ce store
+    HANDOFF_STORE[handoff_session_id] = {
+        "cookies": cookies,
+        "localStorage": json.dumps(local_storage),
+        "sessionStorage": json.dumps(session_storage),
+        "current_url": page.url,
+        "service_url": r.service_url,
+        "created_at": time.time(),
+        "expires_at": time.time() + 600,
+        "owner_id": r.owner_id,
+        "recipient_id": r.recipient_id,
+    }
+
+    r.handoff_session_id = handoff_session_id
+    r.status = "completed"
+    db.add(r)
+    db.commit()
+
+    # cleanup playwright
+    try:
+        await sess["context"].close()
+        await sess["browser"].close()
+        await sess["pw"].stop()
+    except Exception:
+        pass
+    ASSISTED_PW_SESSIONS.pop(str(request_id), None)
+
+    return {
+        "request_id": r.id,
+        "status": r.status,
+        "handoff_session_id": handoff_session_id,
+        "handoff_url": f"/sharing/handoff/{handoff_session_id}",
+        "expires_at": r.expires_at,
+    }
 
 
 

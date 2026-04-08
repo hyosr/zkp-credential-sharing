@@ -113,28 +113,78 @@ async function startAssisted() {
 }
 
 // ---------- Owner: finish manual login and capture session ----------
+// async function finishOwnerCapture() {
+//   const { pendingCaptureRequestId, pendingCaptureTabId, pendingServiceUrl } = await chrome.storage.local.get([
+//     "pendingCaptureRequestId", "pendingCaptureTabId", "pendingServiceUrl"
+//   ]);
+//   if (!pendingCaptureRequestId) {
+//     alert("No pending capture request. Did you approve a request?");
+//     return;
+//   }
+//   chrome.runtime.sendMessage({
+//     type: "CAPTURE_SESSION",
+//     tabId: pendingCaptureTabId,
+//     serviceUrl: pendingServiceUrl,
+//     requestId: pendingCaptureRequestId
+//   }, (response) => {
+//     if (response && response.ok) {
+//       alert("Session captured and sent to recipient!");
+//       window.close();
+//     } else {
+//       alert("Error: " + (response?.error || "unknown"));
+//     }
+//   });
+// }
+
+
+
+
+
 async function finishOwnerCapture() {
-  const { pendingCaptureRequestId, pendingCaptureTabId, pendingServiceUrl } = await chrome.storage.local.get([
-    "pendingCaptureRequestId", "pendingCaptureTabId", "pendingServiceUrl"
+  const { baseUrl, jwt, pendingCaptureRequestId } = await chrome.storage.local.get([
+    "baseUrl", "jwt", "pendingCaptureRequestId"
   ]);
-  if (!pendingCaptureRequestId) {
-    alert("No pending capture request. Did you approve a request?");
+
+  if (!baseUrl || !jwt) {
+    alert("Missing baseUrl/jwt");
     return;
   }
-  chrome.runtime.sendMessage({
-    type: "CAPTURE_SESSION",
-    tabId: pendingCaptureTabId,
-    serviceUrl: pendingServiceUrl,
-    requestId: pendingCaptureRequestId
-  }, (response) => {
-    if (response && response.ok) {
-      alert("Session captured and sent to recipient!");
-      window.close();
-    } else {
-      alert("Error: " + (response?.error || "unknown"));
-    }
+  if (!pendingCaptureRequestId) {
+    alert("No pending request id");
+    return;
+  }
+
+  const r = await fetch(`${baseUrl}/sharing/assisted/${encodeURIComponent(pendingCaptureRequestId)}/finish`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${jwt}`,
+    },
   });
+
+  if (!r.ok) {
+    alert(`Finish failed: ${r.status} ${await r.text()}`);
+    return;
+  }
+
+  const out = await r.json();
+  alert("Session captured and sent to recipient!");
+  window.close();
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // ---------- Update UI for handoff/assisted mode ----------
 function updateModeUI() {
