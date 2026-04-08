@@ -55,6 +55,7 @@ def _handoff_store_put(
     service_url: str,
     cookies: list,
     *,
+
     current_url: str | None = None,
     localStorage: str | None = None,
     sessionStorage: str | None = None,
@@ -96,6 +97,28 @@ def handoff_get(session_id: str):
     data = _handoff_store_get(session_id)
     if not data:
         raise HTTPException(status_code=404, detail="Handoff session not found or expired")
+
+
+
+
+
+# # NEW: Validate recipient
+#     intended_recipient_id = data.get("recipient_id")
+#     if intended_recipient_id and current_user.id != intended_recipient_id:
+#         raise HTTPException(
+#             status_code=403,
+#             detail="You are not authorized to access this handoff session"
+#         )
+
+#     # Log access (optional but useful for debugging)
+#     print(f"[HANDOFF] User {current_user.id} accessed handoff {session_id}")
+#     print(f"[HANDOFF] Cookie count: {len(data.get('cookies', []))}")
+#     for c in data.get("cookies", []):
+#         print(f"[HANDOFF] Cookie: {c.get('name')} | Domain: {c.get('domain')} | Secure: {c.get('secure')}")
+
+
+
+
 
     return {
         "service_url": data.get("service_url"),
@@ -707,6 +730,44 @@ def assisted_approve(request_id: str, current_user: User = Depends(get_current_u
     assist_login_url = req["service_url"]
     return {"status": "approved", "assist_login_url": assist_login_url}
 
+
+
+
+
+# @router.post("/assisted/{request_id}/session")
+# def assisted_submit_session(
+#     request_id: str,
+#     session_data: AssistedSessionPayload,
+#     current_user: User = Depends(get_current_user),
+# ):
+#     """Propriétaire envoie les cookies+storages après s'être connecté manuellement."""
+#     req = ASSISTED_REQUESTS.get(request_id)
+#     if not req:
+#         raise HTTPException(404, "Request not found")
+#     if req["owner_id"] != current_user.id:
+#         raise HTTPException(403, "Not allowed")
+#     if req["status"] != "approved":
+#         raise HTTPException(400, f"Invalid status: {req['status']}")
+
+#     current_url = session_data.current_url or req["service_url"]
+
+#     # Stocker la session dans le handoff store existant
+#     handoff_session_id = _handoff_store_put(
+#         service_url=req["service_url"],
+#         cookies=session_data.cookies,
+#         localStorage=session_data.localStorage,
+#         sessionStorage=session_data.sessionStorage,
+#         current_url=current_url,
+#     )
+#     req["status"] = "completed"
+#     req["handoff_session_id"] = handoff_session_id
+#     return {"handoff_session_id": handoff_session_id}
+
+
+
+
+# ... (début du fichier inchangé)
+
 @router.post("/assisted/{request_id}/session")
 def assisted_submit_session(
     request_id: str,
@@ -722,19 +783,50 @@ def assisted_submit_session(
     if req["status"] != "approved":
         raise HTTPException(400, f"Invalid status: {req['status']}")
 
+    # Utiliser l'URL fournie par l'extension, sinon celle du credential
     current_url = session_data.current_url or req["service_url"]
+
+
+
+
+
+    # Si l'URL fournie est encore une page de login, on la corrige
+    # if current_url.endswith('/auth') or current_url.endswith('/login'):
+    #     from urllib.parse import urlparse
+    #     parsed = urlparse(current_url)
+    #     current_url = f"{parsed.scheme}://{parsed.netloc}/"
+    #     print(f"URL corrigée par le backend: {current_url}")
+
+
 
     # Stocker la session dans le handoff store existant
     handoff_session_id = _handoff_store_put(
         service_url=req["service_url"],
         cookies=session_data.cookies,
+
+
         localStorage=session_data.localStorage,
         sessionStorage=session_data.sessionStorage,
-        current_url=current_url,
+        current_url=current_url,  # Utilisation de l'URL corrigée
     )
     req["status"] = "completed"
     req["handoff_session_id"] = handoff_session_id
+
+
+
+
+
+
     return {"handoff_session_id": handoff_session_id}
+# ... (suite du fichier inchangé)
+
+
+
+
+
+
+
+
 
 @router.get("/assisted/{request_id}/status")
 def assisted_status(request_id: str, current_user: User = Depends(get_current_user)):

@@ -187,55 +187,156 @@ async function apiPostJson(baseUrl, path, jwtToken, body) {
   return await r.json();
 }
 
-/* ---------- Mode 1: Handoff injection ---------- */
+
+
+
+
+
+
+
+
+
+
+
+
 // async function doHandoff(handoffUrl, opts = {}) {
-//   const delayBetweenCookies = Number(opts.delayBetweenCookies ?? 150);
-//   const delayAfterInject = Number(opts.delayAfterInject ?? 800);
 
 //   const data = await fetchJson(handoffUrl);
-
 //   const serviceUrl = data.service_url;
-//   // const currentUrl = data.current_url || serviceUrl;
-
 //   let currentUrl = data.current_url || serviceUrl;
-//   // If the URL contains "/login", strip it to the base origin
-//   if (currentUrl.includes('/login')) {
+
+//   // Normalisation de l'URL : forcer la racine si c'est une page de login
+//   if (currentUrl.includes('/login') || currentUrl.includes('/auth')) {
 //     const origin = new URL(serviceUrl).origin;
 //     currentUrl = origin + '/';
+//     console.log("URL de handoff corrigée vers la racine:", currentUrl);
 //   }
 
-//   if (!serviceUrl) throw new Error("handoff response missing service_url");
-
-//   const cookies = Array.isArray(data.cookies) ? data.cookies : [];
+//   const cookies = data.cookies || [];
 //   const localStorageObj = safeParseJsonObject(data.localStorage);
 //   const sessionStorageObj = safeParseJsonObject(data.sessionStorage);
 
-//   const targetHost = hostFromUrl(currentUrl || serviceUrl);
-//   const serviceOrigin = originFromUrl(currentUrl || serviceUrl);
+//   const targetHost = hostFromUrl(currentUrl);
+//   const serviceOrigin = originFromUrl(currentUrl);
 
-//   // Filter only target-domain cookies
-//   const filteredCookies = cookies.filter((c) => domainMatches(c.domain, targetHost));
+//   // Injection des cookies
+//   for (const c of cookies) {
+//     if (domainMatches(c.domain, targetHost)) {
+//       await setOneCookie(serviceOrigin, c);
+//       await sleep(100);
+//     }
+//   }
 
-//   // Inject cookies (slow)
-//   await injectCookies(serviceOrigin, filteredCookies, {
-//     delayBeforeMs: 300,
-//     delayBetweenMs: delayBetweenCookies,
-//     delayAfterMs: 400,
-//   });
+//   // Attente avant d'ouvrir l'onglet
+//   await sleep(1000);
 
-//   // Let Chrome apply them
-//   await sleep(delayAfterInject);
-
-//   // Open target page
+//   // Ouverture de l'onglet
 //   const tab = await chrome.tabs.create({ url: currentUrl, active: true });
 //   await waitForTabComplete(tab.id, 15000);
 
-//   // Inject storage + reload
+//   // Injection du localStorage et sessionStorage
 //   await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
-
-//   // Optional: wait reload complete
 //   await waitForTabComplete(tab.id, 15000);
 // }
+
+
+
+
+
+
+
+// async function doHandoff(handoffUrl, opts = {}) {
+//   console.log("[HANDOFF] Starting handoff injection...");
+//   console.log("[HANDOFF] Handoff URL:", handoffUrl);
+  
+//   // NEW: Fetch JWT from storage
+//   const { jwt } = await chrome.storage.local.get(["jwt"]);
+  
+//   // Fetch with JWT authentication
+//   let headers = {};
+//   if (jwt) {
+//     headers["Authorization"] = `Bearer ${jwt}`;
+//     console.log("[HANDOFF] Using JWT authentication");
+//   } else {
+//     console.warn("[HANDOFF] No JWT token found - requesting without auth");
+//   }
+
+//   let data;
+//   try {
+//     const response = await fetch(handoffUrl, {
+//       method: "GET",
+//       headers: headers,
+//     });
+    
+//     if (!response.ok) {
+//       throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+//     }
+    
+//     data = await response.json();
+//     console.log("[HANDOFF] Handoff data received successfully");
+//   } catch (err) {
+//     console.error("[HANDOFF] Failed to fetch handoff:", err);
+//     throw err;
+//   }
+
+//   const serviceUrl = data.service_url;
+//   let currentUrl = data.current_url || serviceUrl;
+
+//   if (!serviceUrl) {
+//     throw new Error("handoff response missing service_url");
+//   }
+
+//   console.log("[HANDOFF] Service URL:", serviceUrl);
+//   console.log("[HANDOFF] Current URL:", currentUrl);
+
+//   const cookies = data.cookies || [];
+//   const localStorageObj = safeParseJsonObject(data.localStorage);
+//   const sessionStorageObj = safeParseJsonObject(data.sessionStorage);
+
+//   const targetHost = hostFromUrl(currentUrl);
+//   const serviceOrigin = originFromUrl(currentUrl);
+
+//   console.log("[HANDOFF] Target host:", targetHost);
+//   console.log("[HANDOFF] Service origin:", serviceOrigin);
+//   console.log("[HANDOFF] Total cookies to inject:", cookies.length);
+
+//   // NEW: Validate and filter cookies
+//   let injectedCount = 0;
+//   for (const c of cookies) {
+//     if (domainMatches(c.domain, targetHost)) {
+//       try {
+//         await setOneCookie(serviceOrigin, c);
+//         injectedCount++;
+//         console.log(`[HANDOFF] ✅ Injected cookie: ${c.name} (domain: ${c.domain})`);
+//       } catch (err) {
+//         console.error(`[HANDOFF] ❌ Failed to inject cookie ${c.name}:`, err);
+//       }
+//       await sleep(100);
+//     } else {
+//       console.warn(
+//         `[HANDOFF] ⚠️ Skipped cookie ${c.name} - domain mismatch (${c.domain} vs ${targetHost})`
+//       );
+//     }
+//   }
+
+//   console.log(`[HANDOFF] Injected ${injectedCount}/${cookies.length} cookies`);
+
+//   // Open tab with the corrected URL
+//   console.log("[HANDOFF] Creating new tab...");
+//   const tab = await chrome.tabs.create({ url: currentUrl, active: true });
+//   console.log("[HANDOFF] Tab created with ID:", tab.id);
+  
+//   await waitForTabComplete(tab.id, 15000);
+
+//   // Inject storage and reload
+//   console.log("[HANDOFF] Injecting localStorage/sessionStorage...");
+//   await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
+//   await waitForTabComplete(tab.id, 15000);
+
+//   console.log("[HANDOFF] ✅ Handoff injection complete!");
+// }
+
+
 
 
 
@@ -246,11 +347,24 @@ async function doHandoff(handoffUrl, opts = {}) {
   const serviceUrl = data.service_url;
   let currentUrl = data.current_url || serviceUrl;
 
-  // Force redirect to base domain if the current URL is a login page
-  // if (currentUrl.includes('/login')) {
-  //   const origin = new URL(serviceUrl).origin;
-  //   currentUrl = origin + '/';
-  // }
+  // Nettoyer l'URL : enlever les paramètres de requête et le fragment
+  try {
+    const urlObj = new URL(currentUrl);
+    // Supprimer les paramètres de requête (ex: ?action1=verify_otp)
+    urlObj.search = '';
+    // Supprimer le fragment (ex: #)
+    urlObj.hash = '';
+    // Si le chemin se termine par un mot‑clé de login/OTP, on remonte d'un niveau
+    if (urlObj.pathname.endsWith('/verify_otp') || urlObj.pathname.includes('/auth')) {
+      const parts = urlObj.pathname.split('/');
+      parts.pop(); // enlève le dernier segment
+      urlObj.pathname = parts.join('/') + '/';
+    }
+    currentUrl = urlObj.toString();
+    console.log('URL nettoyée pour handoff:', currentUrl);
+  } catch (e) {
+    console.warn('Impossible de parser l’URL, utilisation brute', currentUrl);
+  }
 
   const cookies = data.cookies || [];
   const localStorageObj = safeParseJsonObject(data.localStorage);
@@ -259,7 +373,6 @@ async function doHandoff(handoffUrl, opts = {}) {
   const targetHost = hostFromUrl(currentUrl);
   const serviceOrigin = originFromUrl(currentUrl);
 
-  // Inject cookies
   for (const c of cookies) {
     if (domainMatches(c.domain, targetHost)) {
       await setOneCookie(serviceOrigin, c);
@@ -267,14 +380,17 @@ async function doHandoff(handoffUrl, opts = {}) {
     }
   }
 
-  // Open tab with the corrected URL
+  await sleep(1000); // délai pour laisser les cookies s’appliquer
+
   const tab = await chrome.tabs.create({ url: currentUrl, active: true });
   await waitForTabComplete(tab.id, 15000);
 
-  // Inject storage and reload
   await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
   await waitForTabComplete(tab.id, 15000);
 }
+
+
+
 
 
 
@@ -556,34 +672,117 @@ if (chrome.notifications?.onClicked) {
 
 
 
-
-
-
-
-
-
-
-
+// ... (début du fichier inchangé)
 
 // ========== OWNER: Capture session after manual login ==========
+// async function captureCurrentSession(tabId, serviceUrl, requestId) {
+//   // Récupérer les cookies pour le domaine
+//   let targetUrl = serviceUrl;
+//   if (targetUrl.includes('/login') || targetUrl.includes('/auth')) {
+//     const origin = new URL(targetUrl).origin;
+//     targetUrl = origin + '/';
+//     console.log("URL corrigée pour handoff:", targetUrl);
+//   }
+
+//   // 1. Récupération des cookies
+//   const cookies = await chrome.cookies.getAll({ url: serviceUrl });
+  
+//   // 2. Injection d'un script pour récupérer localStorage et sessionStorage
+//   const injectionResult = await chrome.scripting.executeScript({
+//     target: { tabId },
+//     func: () => {
+//       const ls = {};
+//       for (let i = 0; i < localStorage.length; i++) {
+//         const key = localStorage.key(i);
+//         ls[key] = localStorage.getItem(key);
+//       }
+//       const ss = {};
+//       for (let i = 0; i < sessionStorage.length; i++) {
+//         const key = sessionStorage.key(i);
+//         ss[key] = sessionStorage.getItem(key);
+//       }
+//       return { localStorage: ls, sessionStorage: ss };
+//     }
+//   });
+//   const { localStorage, sessionStorage } = injectionResult[0].result;
+
+//   // 3. Vérification et logs pour le débogage
+//   console.log("=== CAPTURE DEBUG ===");
+//   console.log("Target URL:", targetUrl);
+//   console.log("Cookies count:", cookies.length);
+//   console.log("localStorage entries:", Object.keys(localStorage).length);
+//   console.log("sessionStorage entries:", Object.keys(sessionStorage).length);
+//   if (Object.keys(localStorage).length === 0) {
+//     console.warn("⚠️ Attention: localStorage est vide. La capture a peut-être été faite trop tôt.");
+//   }
+
+//   // 4. Envoi des données au backend
+//   const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
+//   const response = await fetch(`${baseUrl}/sharing/assisted/${requestId}/session`, {
+//     method: "POST",
+//     headers: {
+//       "Content-Type": "application/json",
+//       Authorization: `Bearer ${jwt}`,
+//     },
+//     body: JSON.stringify({
+//       cookies: cookies,
+//       localStorage: JSON.stringify(localStorage),
+//       sessionStorage: JSON.stringify(sessionStorage),
+//       current_url: targetUrl   // On envoie l'URL corrigée
+//     }),
+//   });
+//   if (!response.ok) {
+//     const errorText = await response.text();
+//     throw new Error(`Failed to submit session: ${response.status} - ${errorText}`);
+//   }
+//   return await response.json();
+// }
+
+
+
+
+
+
+
+
+
+
+
+
 async function captureCurrentSession(tabId, serviceUrl, requestId) {
-  // Récupérer les cookies pour le domaine
-
-
+  console.log("[CAPTURE] Starting session capture...");
+  console.log("[CAPTURE] Tab ID:", tabId);
+  console.log("[CAPTURE] Service URL:", serviceUrl);
+  console.log("[CAPTURE] Request ID:", requestId);
 
   let targetUrl = serviceUrl;
   if (targetUrl.includes('/login') || targetUrl.includes('/auth')) {
     const origin = new URL(targetUrl).origin;
     targetUrl = origin + '/';
-    console.log("URL corrigée pour handoff:", targetUrl);
+    console.log("[CAPTURE] URL corrected to origin:", targetUrl);
   }
 
-
-
-
-
+  // Get cookies for the domain
   const cookies = await chrome.cookies.getAll({ url: serviceUrl });
-  // Exécuter dans la page pour récupérer localStorage et sessionStorage
+  console.log(`[CAPTURE] Found ${cookies.length} cookies for domain`);
+  
+  for (const c of cookies) {
+    console.log(`[CAPTURE] Cookie: ${c.name} | Domain: ${c.domain} | Secure: ${c.secure} | SameSite: ${c.sameSite}`);
+  }
+
+  // NEW: Validate cookie structure before sending
+  const validatedCookies = cookies.map(c => ({
+    name: c.name,
+    value: c.value,
+    domain: c.domain || new URL(serviceUrl).hostname,
+    path: c.path || "/",
+    expires: c.expirationDate || -1,
+    httpOnly: c.httpOnly || false,
+    secure: c.secure || false,
+    sameSite: c.sameSite || "Lax",
+  }));
+
+  // Execute in page to get localStorage and sessionStorage
   const injectionResult = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
@@ -600,9 +799,18 @@ async function captureCurrentSession(tabId, serviceUrl, requestId) {
       return { localStorage: ls, sessionStorage: ss };
     }
   });
+  
   const { localStorage, sessionStorage } = injectionResult[0].result;
+  console.log("[CAPTURE] localStorage keys:", Object.keys(localStorage).length);
+  console.log("[CAPTURE] sessionStorage keys:", Object.keys(sessionStorage).length);
 
   const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
+  
+  if (!jwt) {
+    throw new Error("No JWT token found in storage");
+  }
+
+  console.log("[CAPTURE] Submitting session to backend...");
   const response = await fetch(`${baseUrl}/sharing/assisted/${requestId}/session`, {
     method: "POST",
     headers: {
@@ -610,15 +818,36 @@ async function captureCurrentSession(tabId, serviceUrl, requestId) {
       Authorization: `Bearer ${jwt}`,
     },
     body: JSON.stringify({
-      cookies: cookies,
+      cookies: validatedCookies,
       localStorage: JSON.stringify(localStorage),
       sessionStorage: JSON.stringify(sessionStorage),
-      current_url: targetUrl 
+      current_url: targetUrl
     }),
   });
-  if (!response.ok) throw new Error("Failed to submit session");
-  return await response.json();
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error("[CAPTURE] Submit failed:", response.status, errorText);
+    throw new Error(`Failed to submit session (HTTP ${response.status})`);
+  }
+  
+  const result = await response.json();
+  console.log("[CAPTURE] ✅ Session submitted successfully");
+  console.log("[CAPTURE] Handoff session ID:", result.handoff_session_id);
+  
+  return result;
 }
+
+
+
+
+
+
+
+
+
+
+
 
 
 
