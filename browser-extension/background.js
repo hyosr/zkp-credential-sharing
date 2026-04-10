@@ -105,6 +105,7 @@ async function setOneCookie(serviceOriginUrl, c, forcedDomain = null) {
   }
 
   return await chrome.cookies.set(details);
+  
 }
 
 async function injectCookies(serviceOriginUrl, cookies, opts = {}) {
@@ -296,18 +297,41 @@ async function doHandoff(handoffUrl, opts = {}) {
   await sleep(800);
 
   // 2) ouvrir d'abord serviceUrl (même origine)
-  const tab = await chrome.tabs.create({ url: serviceUrl, active: true });
+  // const tab = await chrome.tabs.create({ url: serviceUrl, active: true });
+  // await waitForTabComplete(tab.id, 15000);
+
+  // // 3) injecter storage puis reload
+  // await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
+  // await waitForTabComplete(tab.id, 15000);
+
+  // // 4) ensuite aller à l'URL finale capturée
+  // if (currentUrl && currentUrl !== serviceUrl) {
+  //   await chrome.tabs.update(tab.id, { url: currentUrl });
+  //   await waitForTabComplete(tab.id, 15000);
+  // }
+
+  // await sleep(Number(opts.delayAfterInject ?? 300));
+
+
+  // 1) ouvrir d'abord l'URL FINALE
+  const finalUrl = currentUrl || serviceUrl;
+  const tab = await chrome.tabs.create({ url: finalUrl, active: true });
   await waitForTabComplete(tab.id, 15000);
 
-  // 3) injecter storage puis reload
+  // 2) injecter storage + cookies directement sur l'URL finale
   await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
   await waitForTabComplete(tab.id, 15000);
 
-  // 4) ensuite aller à l'URL finale capturée
-  if (currentUrl && currentUrl !== serviceUrl) {
-    await chrome.tabs.update(tab.id, { url: currentUrl });
-    await waitForTabComplete(tab.id, 15000);
+  // 3) injecter à nouveau les cookies au cas où certains sont HTTPOnly
+  for (const c of cookies) {
+    try {
+      await setOneCookie(originFromUrl(finalUrl), c);
+      await sleep(Number(opts.delayBetweenCookies ?? 100));
+    } catch (e) {
+      console.warn("Cookie re-inject failed:", c?.name, c?.domain, e);
   }
+  
+}
 
   await sleep(Number(opts.delayAfterInject ?? 300));
 }

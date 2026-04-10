@@ -247,101 +247,243 @@ def make_extension_connect_url(handoff_url: str) -> str:
 
 
 
+# def _inject_theme():
+#     st.markdown(
+#         """
+#         <style>
+#           /* -------- Global cyber theme -------- */
+#           .stApp {
+#             background: radial-gradient(1200px 700px at 20% 0%, rgba(0, 212, 255, 0.10), transparent 60%),
+#                         radial-gradient(900px 600px at 90% 30%, rgba(141, 78, 255, 0.10), transparent 55%),
+#                         linear-gradient(180deg, #0b0f17 0%, #0b0f17 100%);
+#             color: #e6edf3;
+#           }
+
+#           /* Reduce top padding a bit */
+#           .block-container { padding-top: 1.2rem; }
+
+#           /* Sidebar */
+#           [data-testid="stSidebar"] {
+#             background: linear-gradient(180deg, #0c1220 0%, #0a0f1a 100%);
+#             border-right: 1px solid rgba(255,255,255,0.06);
+#           }
+
+#           /* Headings */
+#           h1, h2, h3 {
+#             letter-spacing: 0.2px;
+#           }
+
+#           /* Cards */
+#           .zkp-card {
+#             background: rgba(255,255,255,0.04);
+#             border: 1px solid rgba(255,255,255,0.08);
+#             border-radius: 16px;
+#             padding: 16px 18px;
+#             box-shadow: 0 10px 30px rgba(0,0,0,0.30);
+#             backdrop-filter: blur(6px);
+#           }
+
+#           .zkp-hero {
+#             background: linear-gradient(135deg, rgba(0,212,255,0.10), rgba(141,78,255,0.10));
+#             border: 1px solid rgba(0,212,255,0.18);
+#             border-radius: 18px;
+#             padding: 18px 18px;
+#             margin-bottom: 14px;
+#           }
+
+#           .zkp-badge {
+#             display: inline-block;
+#             background: linear-gradient(135deg, rgba(0,212,255,0.22), rgba(141,78,255,0.16));
+#             color:#aeeaff;
+#             padding: 5px 12px;
+#             border-radius: 999px;
+#             font-size: 12px;
+#             font-weight: 700;
+#             border: 1px solid rgba(0,212,255,0.25);
+#           }
+
+#           .zkp-muted { color: rgba(230,237,243,0.70); }
+
+#           /* Alert boxes */
+#           .zkp-success {
+#             background: rgba(46, 204, 113, 0.08);
+#             border: 1px solid rgba(46, 204, 113, 0.20);
+#             border-left: 4px solid rgba(46, 204, 113, 0.70);
+#             padding: 12px 14px;
+#             border-radius: 12px;
+#             margin: 10px 0;
+#           }
+#           .zkp-warning {
+#             background: rgba(241, 196, 15, 0.07);
+#             border: 1px solid rgba(241, 196, 15, 0.20);
+#             border-left: 4px solid rgba(241, 196, 15, 0.70);
+#             padding: 12px 14px;
+#             border-radius: 12px;
+#             margin: 10px 0;
+#           }
+#           .zkp-danger {
+#             background: rgba(231, 76, 60, 0.08);
+#             border: 1px solid rgba(231, 76, 60, 0.18);
+#             border-left: 4px solid rgba(231, 76, 60, 0.70);
+#             padding: 12px 14px;
+#             border-radius: 12px;
+#             margin: 10px 0;
+#           }
+
+#           /* Buttons: make them look more "product" */
+#           .stButton > button {
+#             border-radius: 12px;
+#             border: 1px solid rgba(255,255,255,0.12);
+#             background: linear-gradient(135deg, rgba(0,212,255,0.14), rgba(141,78,255,0.12));
+#             color: #e6edf3;
+#             font-weight: 700;
+#             padding: 0.55rem 0.9rem;
+#           }
+#           .stButton > button:hover {
+#             border-color: rgba(0,212,255,0.28);
+#             background: linear-gradient(135deg, rgba(0,212,255,0.18), rgba(141,78,255,0.16));
+#           }
+
+#           /* Inputs */
+#           .stTextInput input, .stTextArea textarea, .stSelectbox div, .stNumberInput input {
+#             border-radius: 12px !important;
+#           }
+
+#           /* Expanders */
+#           .streamlit-expanderHeader {
+#             background: rgba(255,255,255,0.04) !important;
+#             border: 1px solid rgba(255,255,255,0.08) !important;
+#             border-radius: 12px !important;
+#             color: #e6edf3 !important;
+#           }
+
+#           /* Small code blocks */
+#           code, pre {
+#             border-radius: 12px !important;
+#           }
+
+#           /* Hide Streamlit menu/footer (optional but makes it feel more "app") */
+#           #MainMenu {visibility: hidden;}
+#           footer {visibility: hidden;}
+#         </style>
+#         """,
+#         unsafe_allow_html=True,
+#     )
+
+
+
+
+
+
+
 def _inject_theme():
     st.markdown(
         """
         <style>
-          /* -------- Global cyber theme -------- */
-          .stApp {
-            background: radial-gradient(1200px 700px at 20% 0%, rgba(0, 212, 255, 0.10), transparent 60%),
-                        radial-gradient(900px 600px at 90% 30%, rgba(141, 78, 255, 0.10), transparent 55%),
-                        linear-gradient(180deg, #0b0f17 0%, #0b0f17 100%);
-            color: #e6edf3;
+          :root {
+            --bg0: #060b14;
+            --bg1: #0a1220;
+            --panel: rgba(255,255,255,0.045);
+            --panel2: rgba(255,255,255,0.06);
+            --border: rgba(255,255,255,0.10);
+
+            --text: #e6edf3;
+            --muted: rgba(230,237,243,0.72);
+
+            --blue: #2f81f7;
+            --cyan: #00d4ff;
+
+            --ok: rgba(46, 204, 113, 0.12);
+            --warn: rgba(241, 196, 15, 0.10);
+            --err: rgba(231, 76, 60, 0.10);
           }
 
-          /* Reduce top padding a bit */
-          .block-container { padding-top: 1.2rem; }
+          /* App background: deep blue, no purple */
+          .stApp {
+            background:
+              radial-gradient(900px 500px at 15% 0%, rgba(0, 212, 255, 0.10), transparent 55%),
+              radial-gradient(900px 600px at 85% 35%, rgba(47, 129, 247, 0.10), transparent 60%),
+              linear-gradient(180deg, var(--bg0) 0%, var(--bg0) 100%);
+            color: var(--text);
+          }
+
+          .block-container { padding-top: 1.0rem; }
 
           /* Sidebar */
           [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #0c1220 0%, #0a0f1a 100%);
+            background: linear-gradient(180deg, var(--bg1) 0%, var(--bg0) 100%);
             border-right: 1px solid rgba(255,255,255,0.06);
           }
 
-          /* Headings */
-          h1, h2, h3 {
-            letter-spacing: 0.2px;
-          }
+          h1,h2,h3 { letter-spacing: 0.2px; }
 
-          /* Cards */
           .zkp-card {
-            background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 16px;
-            padding: 16px 18px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.30);
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 14px 16px;
+            box-shadow: 0 12px 30px rgba(0,0,0,0.30);
             backdrop-filter: blur(6px);
           }
 
           .zkp-hero {
-            background: linear-gradient(135deg, rgba(0,212,255,0.10), rgba(141,78,255,0.10));
+            background: linear-gradient(135deg, rgba(0,212,255,0.10), rgba(47,129,247,0.10));
             border: 1px solid rgba(0,212,255,0.18);
-            border-radius: 18px;
-            padding: 18px 18px;
-            margin-bottom: 14px;
+            border-radius: 16px;
+            padding: 16px 16px;
+            margin-bottom: 12px;
           }
 
           .zkp-badge {
             display: inline-block;
-            background: linear-gradient(135deg, rgba(0,212,255,0.22), rgba(141,78,255,0.16));
-            color:#aeeaff;
+            background: linear-gradient(135deg, rgba(0,212,255,0.20), rgba(47,129,247,0.14));
+            color: #bfefff;
             padding: 5px 12px;
             border-radius: 999px;
             font-size: 12px;
-            font-weight: 700;
-            border: 1px solid rgba(0,212,255,0.25);
+            font-weight: 800;
+            border: 1px solid rgba(0,212,255,0.22);
           }
 
-          .zkp-muted { color: rgba(230,237,243,0.70); }
+          .zkp-muted { color: var(--muted); }
 
-          /* Alert boxes */
           .zkp-success {
-            background: rgba(46, 204, 113, 0.08);
-            border: 1px solid rgba(46, 204, 113, 0.20);
+            background: var(--ok);
+            border: 1px solid rgba(46, 204, 113, 0.22);
             border-left: 4px solid rgba(46, 204, 113, 0.70);
-            padding: 12px 14px;
+            padding: 10px 12px;
             border-radius: 12px;
             margin: 10px 0;
           }
           .zkp-warning {
-            background: rgba(241, 196, 15, 0.07);
-            border: 1px solid rgba(241, 196, 15, 0.20);
-            border-left: 4px solid rgba(241, 196, 15, 0.70);
-            padding: 12px 14px;
+            background: var(--warn);
+            border: 1px solid rgba(241, 196, 15, 0.22);
+            border-left: 4px solid rgba(241, 196, 15, 0.75);
+            padding: 10px 12px;
             border-radius: 12px;
             margin: 10px 0;
           }
           .zkp-danger {
-            background: rgba(231, 76, 60, 0.08);
-            border: 1px solid rgba(231, 76, 60, 0.18);
-            border-left: 4px solid rgba(231, 76, 60, 0.70);
-            padding: 12px 14px;
+            background: var(--err);
+            border: 1px solid rgba(231, 76, 60, 0.22);
+            border-left: 4px solid rgba(231, 76, 60, 0.75);
+            padding: 10px 12px;
             border-radius: 12px;
             margin: 10px 0;
           }
 
-          /* Buttons: make them look more "product" */
+          /* Buttons */
           .stButton > button {
             border-radius: 12px;
             border: 1px solid rgba(255,255,255,0.12);
-            background: linear-gradient(135deg, rgba(0,212,255,0.14), rgba(141,78,255,0.12));
-            color: #e6edf3;
-            font-weight: 700;
+            background: linear-gradient(135deg, rgba(0,212,255,0.16), rgba(47,129,247,0.14));
+            color: var(--text);
+            font-weight: 800;
             padding: 0.55rem 0.9rem;
           }
           .stButton > button:hover {
-            border-color: rgba(0,212,255,0.28);
-            background: linear-gradient(135deg, rgba(0,212,255,0.18), rgba(141,78,255,0.16));
+            border-color: rgba(0,212,255,0.30);
+            background: linear-gradient(135deg, rgba(0,212,255,0.20), rgba(47,129,247,0.18));
           }
 
           /* Inputs */
@@ -351,18 +493,14 @@ def _inject_theme():
 
           /* Expanders */
           .streamlit-expanderHeader {
-            background: rgba(255,255,255,0.04) !important;
-            border: 1px solid rgba(255,255,255,0.08) !important;
+            background: var(--panel2) !important;
+            border: 1px solid var(--border) !important;
             border-radius: 12px !important;
-            color: #e6edf3 !important;
+            color: var(--text) !important;
           }
 
-          /* Small code blocks */
-          code, pre {
-            border-radius: 12px !important;
-          }
+          code, pre { border-radius: 12px !important; }
 
-          /* Hide Streamlit menu/footer (optional but makes it feel more "app") */
           #MainMenu {visibility: hidden;}
           footer {visibility: hidden;}
         </style>
@@ -371,31 +509,87 @@ def _inject_theme():
     )
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+# def _render_top_header():
+#     st.markdown(
+#         """
+#         <div class="zkp-hero">
+#           <div style="display:flex; align-items:center; justify-content:space-between; gap:16px;">
+#             <div>
+#               <div class="zkp-badge">ZERO‑KNOWLEDGE • SCHNORR • AES‑GCM</div>
+#               <h1 style="margin:10px 0 2px 0;">ZKP Secure Credential Sharing</h1>
+#               <div class="zkp-muted">
+#                 Passwordless proof‑of‑knowledge login and secure secret sharing — designed for Zero‑Trust environments.
+#               </div>
+#             </div>
+#             <div style="text-align:right;">
+#               <div class="zkp-muted" style="font-size:12px;">API Endpoint</div>
+#               <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+#                           font-size:13px; padding:10px 12px; border-radius:12px;
+#                           background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);">
+#                 %s
+#               </div>
+#             </div>
+#           </div>
+#         </div>
+#         """ % API_URL,
+#         unsafe_allow_html=True,
+#     )
+
+
+
+
+
 def _render_top_header():
     st.markdown(
-        """
+        f"""
         <div class="zkp-hero">
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:16px;">
+          <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px;">
             <div>
-              <div class="zkp-badge">ZERO‑KNOWLEDGE • SCHNORR • AES‑GCM</div>
-              <h1 style="margin:10px 0 2px 0;">ZKP Secure Credential Sharing</h1>
-              <div class="zkp-muted">
-                Passwordless proof‑of‑knowledge login and secure secret sharing — designed for Zero‑Trust environments.
-              </div>
+              <div class="zkp-badge">ZKP • Schnorr • AES‑GCM</div>
+              <h1 style="margin:10px 0 2px 0;">ZKP Credential Sharing</h1>
+              <div class="zkp-muted">Secure credential storage + relay login (no password reveal).</div>
             </div>
             <div style="text-align:right;">
-              <div class="zkp-muted" style="font-size:12px;">API Endpoint</div>
+              <div class="zkp-muted" style="font-size:12px;">API</div>
               <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
                           font-size:13px; padding:10px 12px; border-radius:12px;
                           background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);">
-                %s
+                {API_URL}
               </div>
             </div>
           </div>
         </div>
-        """ % API_URL,
+        """,
         unsafe_allow_html=True,
     )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def _init_session_state():
@@ -541,98 +735,153 @@ def main():
 
 # ─── Pages (FUNCTIONAL LOGIC UNCHANGED — only minor UI framing) ───────────────
 
+# def page_login():
+#     st.title("🔐 Zero-Knowledge Proof Login")
+#     st.markdown(
+#         """
+#         <div class="zkp-warning">
+#           Login uses a Zero‑Knowledge Proof (Schnorr). Your password never leaves the client.
+#         </div>
+#         """,
+#         unsafe_allow_html=True,
+#     )
+
+#     col2 = st.columns([1, 1], gap="large")
+    
+
+#     with col2:
+#         st.subheader("Login")
+#         with st.form("login_form"):
+#             email = st.text_input("Email")
+#             password = st.text_input("Master password (stays local)", type="password")
+#             submitted = st.form_submit_button("ZKP Login", use_container_width=True)
+
+#         if submitted and email and password:
+#             with st.spinner("Retrieving salts..."):
+#                 salts = api_get(f"/auth/salts/{email}")
+#             if "error" in salts or "zkp_salt" not in salts:
+#                 st.error("User not found")
+#                 return
+
+#             zkp_salt = salts["zkp_salt"]
+#             master_salt = salts["master_salt"]
+
+#             with st.spinner("Generating ZKP commitment..."):
+#                 commitment_hex, r = client_create_commitment()
+#                 resp_challenge = api_post("/auth/challenge", {
+#                     "email": email,
+#                     "commitment": commitment_hex,
+#                 })
+
+#             if "error" in resp_challenge or "challenge_id" not in resp_challenge:
+#                 st.error(f"Challenge error: {resp_challenge}")
+#                 return
+
+#             challenge_id = resp_challenge["challenge_id"]
+#             challenge_hex = resp_challenge["challenge_value"]
+
+#             with st.spinner("Computing ZKP proof..."):
+#                 response_hex = client_compute_response(password, zkp_salt, r, challenge_hex)
+#                 resp_verify = api_post("/auth/verify", {
+#                     "email": email,
+#                     "challenge_id": challenge_id,
+#                     "response": response_hex,
+#                 })
+
+#             if "access_token" in resp_verify:
+#                 st.session_state.jwt_token = resp_verify["access_token"]
+#                 st.session_state.current_user = resp_verify["username"]
+#                 st.session_state.master_password = password
+#                 st.session_state.zkp_salt = zkp_salt
+#                 st.session_state.master_salt = master_salt
+#                 st.markdown(
+#                     f"""
+#                     <div class="zkp-success">
+#                       ✅ <strong>ZKP login successful</strong> — Welcome <strong>{resp_verify['username']}</strong><br/>
+#                       <span class="zkp-muted">Session token stored in memory (Streamlit session).</span>
+#                     </div>
+#                     """,
+#                     unsafe_allow_html=True,
+#                 )
+#                 st.balloons()
+#                 st.rerun()
+#             else:
+#                 st.error(f"Authentication failed: {resp_verify.get('detail', resp_verify)}")
+
+
+
+
 def page_login():
     st.title("🔐 Zero-Knowledge Proof Login")
     st.markdown(
         """
         <div class="zkp-warning">
-          <strong>ZKP Principle:</strong> You prove you know your password
-          <strong>without ever sending it</strong> to the server.
-          The Schnorr protocol ensures an adversary intercepting communications cannot recover your secret.
+          Login uses a Zero‑Knowledge Proof (Schnorr). Your password never leaves the client.
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    col1, col2 = st.columns([1, 1], gap="large")
-    with col1:
-        st.subheader("Schnorr Protocol Steps")
-        st.markdown(
-            """
-1. 🎲 **Commitment**: generate random `r` → send `g^r mod p`  
-2. 🎯 **Challenge**: server generates `c = H(Y || g^r || email)`  
-3. 📐 **Response**: compute `s = r - c·x mod q`  
-4. ✅ **Verification**: server checks `g^s · Y^c ≡ g^r (mod p)`  
-            """
-        )
+    # Formulaire de connexion (sans colonnes)
+    st.subheader("Login")
+    with st.form("login_form"):
+        email = st.text_input("Email")
+        password = st.text_input("Master password (stays local)", type="password")
+        submitted = st.form_submit_button("ZKP Login", use_container_width=True)
 
-        with st.expander("Threat model (what this protects against)"):
+    if submitted and email and password:
+        with st.spinner("Retrieving salts..."):
+            salts = api_get(f"/auth/salts/{email}")
+        if "error" in salts or "zkp_salt" not in salts:
+            st.error("User not found")
+            return
+
+        zkp_salt = salts["zkp_salt"]
+        master_salt = salts["master_salt"]
+
+        with st.spinner("Generating ZKP commitment..."):
+            commitment_hex, r = client_create_commitment()
+            resp_challenge = api_post("/auth/challenge", {
+                "email": email,
+                "commitment": commitment_hex,
+            })
+
+        if "error" in resp_challenge or "challenge_id" not in resp_challenge:
+            st.error(f"Challenge error: {resp_challenge}")
+            return
+
+        challenge_id = resp_challenge["challenge_id"]
+        challenge_hex = resp_challenge["challenge_value"]
+
+        with st.spinner("Computing ZKP proof..."):
+            response_hex = client_compute_response(password, zkp_salt, r, challenge_hex)
+            resp_verify = api_post("/auth/verify", {
+                "email": email,
+                "challenge_id": challenge_id,
+                "response": response_hex,
+            })
+
+        if "access_token" in resp_verify:
+            st.session_state.jwt_token = resp_verify["access_token"]
+            st.session_state.current_user = resp_verify["username"]
+            st.session_state.master_password = password
+            st.session_state.zkp_salt = zkp_salt
+            st.session_state.master_salt = master_salt
             st.markdown(
-                """
-- Prevents password disclosure to the server
-- Mitigates credential replay (challenge has TTL)
-- Limits exposure if server logs are compromised
-                """
+                f"""
+                <div class="zkp-success">
+                  ✅ <strong>ZKP login successful</strong> — Welcome <strong>{resp_verify['username']}</strong><br/>
+                  <span class="zkp-muted">Session token stored in memory (Streamlit session).</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
+            st.balloons()
+            st.rerun()
+        else:
+            st.error(f"Authentication failed: {resp_verify.get('detail', resp_verify)}")
 
-    with col2:
-        st.subheader("Login")
-        with st.form("login_form"):
-            email = st.text_input("Email")
-            password = st.text_input("Master password (stays local)", type="password")
-            submitted = st.form_submit_button("ZKP Login", use_container_width=True)
 
-        if submitted and email and password:
-            with st.spinner("Retrieving salts..."):
-                salts = api_get(f"/auth/salts/{email}")
-            if "error" in salts or "zkp_salt" not in salts:
-                st.error("User not found")
-                return
-
-            zkp_salt = salts["zkp_salt"]
-            master_salt = salts["master_salt"]
-
-            with st.spinner("Generating ZKP commitment..."):
-                commitment_hex, r = client_create_commitment()
-                resp_challenge = api_post("/auth/challenge", {
-                    "email": email,
-                    "commitment": commitment_hex,
-                })
-
-            if "error" in resp_challenge or "challenge_id" not in resp_challenge:
-                st.error(f"Challenge error: {resp_challenge}")
-                return
-
-            challenge_id = resp_challenge["challenge_id"]
-            challenge_hex = resp_challenge["challenge_value"]
-
-            with st.spinner("Computing ZKP proof..."):
-                response_hex = client_compute_response(password, zkp_salt, r, challenge_hex)
-                resp_verify = api_post("/auth/verify", {
-                    "email": email,
-                    "challenge_id": challenge_id,
-                    "response": response_hex,
-                })
-
-            if "access_token" in resp_verify:
-                st.session_state.jwt_token = resp_verify["access_token"]
-                st.session_state.current_user = resp_verify["username"]
-                st.session_state.master_password = password
-                st.session_state.zkp_salt = zkp_salt
-                st.session_state.master_salt = master_salt
-                st.markdown(
-                    f"""
-                    <div class="zkp-success">
-                      ✅ <strong>ZKP login successful</strong> — Welcome <strong>{resp_verify['username']}</strong><br/>
-                      <span class="zkp-muted">Session token stored in memory (Streamlit session).</span>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                st.balloons()
-                st.rerun()
-            else:
-                st.error(f"Authentication failed: {resp_verify.get('detail', resp_verify)}")
 
 
 

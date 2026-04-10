@@ -1,3 +1,228 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ZKP Handoff</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="logo">ZKP</div>
+        <div class="title">
+          <div class="name">Credential Sharing</div>
+          <div class="subtitle">Handoff & Assisted</div>
+        </div>
+      </header>
+
+      <section class="card">
+        <!-- Settings -->
+        <div class="section">
+          <div class="sectionTitle">
+            <h3>Settings</h3>
+            <span class="pill">OWNER / RECIPIENT</span>
+          </div>
+
+          <label class="label" for="baseUrl">Backend URL</label>
+          <input id="baseUrl" class="input" placeholder="http://localhost:8001" />
+
+          <label class="label" for="jwt">Backend JWT</label>
+          <textarea
+            id="jwt"
+            class="textarea"
+            rows="2"
+            placeholder="Paste your JWT access_token"
+          ></textarea>
+        </div>
+
+        <!-- Assisted -->
+        <div class="section">
+          <div class="sectionTitle">
+            <h3>Assisted mode</h3>
+            <span class="pill">APPROVAL</span>
+          </div>
+
+          <div class="row" style="justify-content:space-between;">
+            <label style="display:flex;align-items:center;gap:8px;">
+              <input type="radio" name="mode" id="modeHandoff" checked />
+              <span>Handoff</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;">
+              <input type="radio" name="mode" id="modeAssisted" />
+              <span>Assisted</span>
+            </label>
+          </div>
+
+          <div id="assistedBox" style="display:none; margin-top: 10px;">
+            <label class="label" for="assistedToken">Share token (recipient)</label>
+            <textarea
+              id="assistedToken"
+              class="textarea"
+              rows="2"
+              placeholder="Paste share token here (recipient)"
+            ></textarea>
+
+            <div class="row">
+              <button id="assistedStart" class="btn primary">
+                <span id="assistedStartText">Request owner approval</span>
+                <span id="assistedSpinner" class="spinner hidden"></span>
+              </button>
+            </div>
+
+            <div class="row">
+              <button id="finishLogin" class="btn">
+                I finished login (owner)
+              </button>
+            </div>
+
+            <div class="details">
+              Recipient: request approval then wait for completion.<br />
+              Owner: approve → log in in the opened tab → click “I finished login”.
+            </div>
+
+            <div id="pendingRequestsSection" style="margin-top: 12px;">
+              <div class="sectionTitle">
+                <h3>Pending requests</h3>
+                <span class="pill">OWNER</span>
+              </div>
+              <div id="pendingList" style="max-height: 220px; overflow-y: auto;">
+                Loading...
+              </div>
+              <button
+                id="refreshPending"
+                class="btn ghost"
+                style="margin-top: 8px;"
+              >
+                Refresh
+              </button>
+            </div>
+
+            <div id="assistedCaptureBox" style="margin-top: 12px;">
+              <div class="sectionTitle">
+                <h3>Manual capture</h3>
+                <span class="pill">OWNER</span>
+              </div>
+
+              <label class="label" for="captureRequestId">Request ID (from dashboard)</label>
+              <input
+                id="captureRequestId"
+                class="input"
+                placeholder="Paste the request ID here"
+              />
+              <button
+                id="captureBtn"
+                class="btn primary"
+                style="margin-top: 8px;"
+              >
+                Capture & send session
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Handoff -->
+        <div class="section">
+          <div class="sectionTitle">
+            <h3>Handoff injection</h3>
+            <span class="pill">RECIPIENT</span>
+          </div>
+
+          <label class="label" for="token">Handoff token or URL</label>
+          <textarea
+            id="token"
+            class="textarea"
+            rows="3"
+            placeholder="Paste session_id or full handoff URL"
+          ></textarea>
+
+          <div class="grid2">
+            <div>
+              <label class="label" for="delayBetweenCookies">Delay between cookies (ms)</label>
+              <input
+                id="delayBetweenCookies"
+                class="input"
+                type="number"
+                min="0"
+                step="50"
+                placeholder="150"
+              />
+            </div>
+            <div>
+              <label class="label" for="delayAfterInject">Delay after inject (ms)</label>
+              <input
+                id="delayAfterInject"
+                class="input"
+                type="number"
+                min="0"
+                step="100"
+                placeholder="800"
+              />
+            </div>
+          </div>
+
+          <div class="row">
+            <button id="go" class="btn primary">
+              <span id="goText">Connect</span>
+              <span id="spinner" class="spinner hidden"></span>
+            </button>
+            <button id="clear" class="btn ghost" title="Clear saved token">
+              Clear
+            </button>
+          </div>
+
+          <div id="status" class="status" aria-live="polite"></div>
+
+          <details class="details">
+            <summary>Tips</summary>
+            <ul>
+              <li>Paste either a <b>session_id</b> or a full <b>handoff URL</b>.</li>
+              <li>The extension saves your Backend URL/JWT locally.</li>
+            </ul>
+          </details>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <span class="muted">ZKP handoff opens a connected tab after injection.</span>
+      </footer>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 <!-- <!doctype html>
 <html>
   <head>
@@ -206,7 +431,7 @@
 
 
 
-<!doctype html>
+<!-- <!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -327,4 +552,4 @@
 
     <script src="popup.js"></script>
   </body>
-</html>
+</html> -->

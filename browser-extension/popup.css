@@ -1,4 +1,235 @@
+:root{
+  --bg: #060b14;
+  --bg2:#0a1220;
+  --card: rgba(255,255,255,0.06);
+  --text: rgba(255,255,255,0.92);
+  --muted: rgba(255,255,255,0.68);
+  --border: rgba(255,255,255,0.10);
+  --shadow: 0 10px 30px rgba(0,0,0,0.28);
 
+  --blue: #2f81f7;
+  --cyan: #00d4ff;
+  --ok: #22c55e;
+  --danger: #ef4444;
+}
+
+@media (prefers-color-scheme: light) {
+  :root{
+    --bg: #f6f8ff;
+    --bg2:#ffffff;
+    --card: #ffffff;
+    --text: #0b1220;
+    --muted: rgba(11,18,32,0.65);
+    --border: rgba(11,18,32,0.10);
+    --shadow: 0 10px 30px rgba(30,41,59,0.12);
+  }
+}
+
+*{ box-sizing:border-box; }
+body{
+  margin:0;
+  width:390px;
+  background:
+    radial-gradient(900px 500px at 15% 0%, rgba(0,212,255,0.18), transparent 55%),
+    radial-gradient(900px 600px at 85% 35%, rgba(47,129,247,0.14), transparent 60%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg) 100%);
+  color:var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+.app{ padding:14px; }
+
+.header{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:12px;
+}
+.logo{
+  width:42px;
+  height:42px;
+  border-radius:12px;
+  background: linear-gradient(135deg, rgba(0,212,255,1), rgba(47,129,247,1));
+  display:grid;
+  place-items:center;
+  font-weight:900;
+  letter-spacing:1px;
+  color:white;
+  box-shadow:var(--shadow);
+}
+.title .name{ font-weight:900; line-height:1.1; }
+.title .subtitle{ color:var(--muted); font-size:12px; margin-top:2px; }
+
+.card{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:12px;
+  box-shadow:var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.section{
+  margin-top:12px;
+  padding-top:12px;
+  border-top:1px solid rgba(255,255,255,0.08);
+}
+.section:first-child{
+  margin-top:0;
+  padding-top:0;
+  border-top:none;
+}
+.sectionTitle{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin:0 0 8px 0;
+}
+.sectionTitle h3{
+  margin:0;
+  font-size:13px;
+  letter-spacing:0.2px;
+}
+.pill{
+  font-size:11px;
+  font-weight:800;
+  color: rgba(191,239,255,0.92);
+  border:1px solid rgba(0,212,255,0.18);
+  background: rgba(0,212,255,0.08);
+  padding:3px 8px;
+  border-radius:999px;
+}
+
+.label{
+  display:block;
+  font-size:12px;
+  color:var(--muted);
+  margin:10px 0 6px;
+}
+
+.input, .textarea{
+  width:100%;
+  border-radius:12px;
+  border:1px solid var(--border);
+  background: rgba(255,255,255,0.04);
+  color:var(--text);
+  padding:10px 10px;
+  outline:none;
+}
+.textarea{ resize:none; }
+
+.input:focus, .textarea:focus{
+  border-color: rgba(47,129,247,0.70);
+  box-shadow: 0 0 0 4px rgba(47,129,247,0.18);
+}
+
+.row{
+  display:flex;
+  gap:10px;
+  margin-top:12px;
+  align-items:center;
+}
+
+.btn{
+  border:1px solid var(--border);
+  background: rgba(255,255,255,0.06);
+  color:var(--text);
+  border-radius:12px;
+  padding:10px 12px;
+  cursor:pointer;
+  font-weight:800;
+}
+.btn.primary{
+  flex:1;
+  border:none;
+  background: linear-gradient(135deg, rgba(0,212,255,1), rgba(47,129,247,1));
+}
+.btn.ghost{ width: 92px; }
+.btn:disabled{ opacity:0.7; cursor:not-allowed; }
+
+.status{
+  min-height:18px;
+  margin-top:10px;
+  font-size:12px;
+  color:var(--muted);
+}
+.status.ok{ color: var(--ok); }
+.status.err{ color: var(--danger); }
+
+.details{
+  margin-top:10px;
+  color:var(--muted);
+  font-size:12px;
+}
+
+.spinner{
+  width:14px;
+  height:14px;
+  border-radius:50%;
+  border:2px solid rgba(255,255,255,0.35);
+  border-top-color: rgba(255,255,255,0.95);
+  display:inline-block;
+  margin-left:8px;
+  animation: spin 1s linear infinite;
+  vertical-align:-2px;
+}
+.hidden{ display:none; }
+
+.grid2{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:10px;
+}
+
+.reqItem{
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.10);
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.reqMeta{ color: var(--muted); font-size: 11px; margin-top: 4px; }
+.reqActions{ display:flex; gap:8px; margin-top: 8px; }
+.reqActions button{ flex:1; }
+
+.footer{
+  margin-top:10px;
+  font-size:11px;
+  color:var(--muted);
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* 
 :root{
   --bg: #0b1220;
   --card: rgba(255,255,255,0.06);
@@ -157,4 +388,4 @@ body {
 }
 .hidden { display: none; }
 
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin { to { transform: rotate(360deg); } } */
