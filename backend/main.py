@@ -37,6 +37,11 @@ from backend.routers.session import router as session_router
 
 from backend.routers.assisted_access import router as assisted_access_router
 
+from backend.routers.final_capture_share import router as final_capture_share_router
+
+from backend.routers.owner_handoff import router as owner_handoff_router
+
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -95,7 +100,9 @@ app.include_router(session_router)
 
 app.include_router(assisted_access_router)
 
+app.include_router(final_capture_share_router)
 
+app.include_router(owner_handoff_router)
 @app.get("/")
 def root():
     return {

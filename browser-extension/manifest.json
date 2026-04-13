@@ -6,6 +6,8 @@
   "host_permissions": [
     "http://localhost:8001/*",
     "https://www.facebook.com/*",
+    "https://recolyse.com/*",
+
     "https://*/*",
     "http://*/*"
   ],

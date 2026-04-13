@@ -510,8 +510,8 @@ def main():
         "📩 Access a Share",
         "🚪 Relay Login (no password reveal)",
         "👥 Assisted Relay Login",
+        "Final Capture Share",
         "🛎️ Owner — Assisted Requests",
-        # "🔐 Keycloak Passwordless Share (Device Flow)",
         "📋 Audit Trail",
         "ℹ️ About ZKP",
     ]
@@ -549,6 +549,13 @@ def main():
 
     elif menu == "👥 Assisted Relay Login":
         page_assisted_relay_login()
+
+
+    elif menu == "Final Capture Share":
+        page_final_capture_share()
+
+
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -704,6 +711,200 @@ def page_owner_assisted_requests():
                     st.warning("After manual login, open the extension, paste this Request ID, and click 'Capture and send session'.")
                 else:
                     st.error(f"Approval failed: {resp.get('detail', resp)}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def _api_get(path: str, jwt: str):
+    r = requests.get(
+        f"{API_URL}{path}",
+        headers={"Authorization": f"Bearer {jwt}"},
+        timeout=30
+    )
+    try:
+        return r.status_code, r.json()
+    except Exception:
+        return r.status_code, {"raw": r.text}
+
+
+def _api_post(path: str, jwt: str, payload: dict | None = None):
+    r = requests.post(
+        f"{API_URL}{path}",
+        headers={
+            "Authorization": f"Bearer {jwt}",
+            "Content-Type": "application/json",
+        },
+        json=payload or {},
+        timeout=30
+    )
+    try:
+        return r.status_code, r.json()
+    except Exception:
+        return r.status_code, {"raw": r.text}
+    
+
+
+
+
+
+def page_final_capture_share():
+    st.title("🎯 Final Capture Share (new flow)")
+    st.caption("Owner login -> capture -> generate final token -> recipient opens connected profile.")
+
+    jwt = st.session_state.get("jwt_token", "")
+    if not jwt:
+        st.warning("Please login first.")
+        return
+
+    who_status, who = _api_get("/auth/me", jwt)
+    if who_status == 200:
+        st.info(f"Logged in as: {who.get('email', who.get('username', 'unknown'))}")
+    else:
+        st.error("JWT invalid for current backend")
+        st.json(who)
+        return
+
+    t1, t2, t3 = st.tabs([
+        "1) Owner: start request",
+        "2) Owner: finish capture + token",
+        "3) Recipient: resolve token"
+    ])
+
+    with t1:
+        st.subheader("Owner starts capture request")
+        credential_id = st.number_input("Credential ID", min_value=1, step=1, value=1)
+        recipient_email = st.text_input("Recipient email")
+        ttl_seconds = st.number_input("Token TTL (seconds)", min_value=60, max_value=86400, value=600, step=60)
+        max_uses = st.number_input("Max uses", min_value=1, max_value=10, value=1, step=1)
+
+        if st.button("Start request"):
+            payload = {
+                "credential_id": int(credential_id),
+                "recipient_email": recipient_email.strip(),
+                "ttl_seconds": int(ttl_seconds),
+                "max_uses": int(max_uses),
+            }
+            s, out = _api_post("/sharing/final-capture/start", jwt, payload)
+            if s == 200:
+                st.success("Request started ✅")
+                st.json(out)
+                st.session_state["final_capture_request_id"] = out.get("request_id", "")
+                st.session_state["final_capture_service_url"] = out.get("service_url", "")
+                st.write("Open login URL:", out.get("service_url", ""))
+            else:
+                st.error(f"Start failed ({s})")
+                st.json(out)
+
+    # with t2:
+    #     st.subheader("Owner finishes login, captures session, generates final token")
+    #     req_id_default = st.session_state.get("final_capture_request_id", "")
+    #     req_id = st.text_input("Request ID", value=req_id_default)
+
+    #     st.markdown("Paste captured browser session:")
+    #     cookies_text = st.text_area(
+    #         "Cookies JSON array",
+    #         height=180,
+    #         placeholder='[{"name":"sid","value":"...","domain":"example.com","path":"/","secure":true,"httpOnly":true}]'
+    #     )
+    #     local_storage_text = st.text_area("localStorage JSON string", height=100, placeholder='{"k":"v"}')
+    #     session_storage_text = st.text_area("sessionStorage JSON string", height=100, placeholder='{"k":"v"}')
+    #     current_url = st.text_input("Current URL after login", value=st.session_state.get("final_capture_service_url", ""))
+
+    #     if st.button("Finish + Generate token"):
+    #         try:
+    #             cookies = json.loads(cookies_text) if cookies_text.strip() else []
+    #         except Exception as e:
+    #             st.error(f"Invalid cookies JSON: {e}")
+    #             st.stop()
+
+    #         payload = {
+    #             "request_id": req_id.strip(),
+    #             "cookies": cookies,
+    #             "localStorage": local_storage_text.strip() if local_storage_text.strip() else "{}",
+    #             "sessionStorage": session_storage_text.strip() if session_storage_text.strip() else "{}",
+    #             "current_url": current_url.strip() if current_url.strip() else None,
+    #         }
+
+    #         s, out = _api_post("/sharing/final-capture/finish", jwt, payload)
+    #         if s == 200:
+    #             st.success("Final token generated ✅")
+    #             token = out.get("final_token", "")
+    #             st.code(token, language="text")
+    #             st.session_state["final_capture_token"] = token
+    #             st.json(out)
+    #         else:
+    #             st.error(f"Finish failed ({s})")
+    #             st.json(out)
+
+
+
+    with t2:
+        st.subheader("Owner finishes login -> paste handoff URL -> generate final token")
+        req_id_default = st.session_state.get("final_capture_request_id", "")
+        req_id = st.text_input("Request ID", value=req_id_default)
+        handoff_url = st.text_input("Handoff URL", placeholder="http://localhost:8001/sharing/handoff/<session_id>")
+
+        if st.button("Finish + Generate token"):
+            payload = {
+                "request_id": req_id.strip(),
+                "handoff_url": handoff_url.strip(),
+            }
+            s, out = _api_post("/sharing/final-capture/finish-by-handoff", jwt, payload)
+            if s == 200:
+                st.success("Final token generated ✅")
+                token = out.get("final_token", "")
+                st.code(token, language="text")
+                st.session_state["final_capture_token"] = token
+                st.json(out)
+            else:
+                st.error(f"Finish failed ({s})")
+                st.json(out) 
+
+
+
+
+
+
+
+
+    with t3:
+        st.subheader("Recipient resolves final token")
+        final_token_default = st.session_state.get("final_capture_token", "")
+        final_token = st.text_input("Final token", value=final_token_default)
+
+        if st.button("Resolve token"):
+            if not final_token.strip():
+                st.error("Final token is required")
+            else:
+                s, out = _api_post(f"/sharing/final-capture/resolve/{final_token.strip()}", jwt, {})
+                if s == 200:
+                    st.success("Token resolved ✅")
+                    st.write("handoff_url:", f"{API_URL}{out.get('handoff_url', '')}")
+                    st.json(out)
+                else:
+                    st.error(f"Resolve failed ({s})")
+                    st.json(out)
+
+
+
+
+
+
+
+
+
 
 
 def page_keycloak_device_flow():

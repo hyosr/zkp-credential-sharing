@@ -173,6 +173,49 @@
             </button>
           </div>
 
+
+
+          <div style="margin-top:12px;">
+            <label for="finalToken">Final token</label>
+            <textarea id="finalToken" rows="2" placeholder="Paste final token"></textarea>
+            <button id="openByFinalToken">Open connected profile</button>
+          </div>
+
+
+
+          <div style="margin-top:12px; border-top:1px solid #ddd; padding-top:10px;">
+            <label for="ownerHandoffUrl">Owner handoff URL</label>
+            <textarea id="ownerHandoffUrl" rows="2" placeholder="Will appear here after capture"></textarea>
+            <div style="display:flex; gap:8px; margin-top:8px;">
+              <button id="generateOwnerHandoff">Generate handoff URL (owner)</button>
+              <button id="copyOwnerHandoff">Copy URL</button>
+            </div>
+          </div>
+
+
+
+
+
+
+          <div style="margin-top:12px; border-top:1px solid #ddd; padding-top:10px;">
+            <label for="ownerRequestId">Request ID</label>
+            <input id="ownerRequestId" type="text" placeholder="Paste request_id" />
+
+            <div style="display:flex; gap:8px; margin-top:8px;">
+              <button id="generateOwnerHandoff">Generate handoff URL</button>
+              <button id="copyOwnerHandoff">Copy URL</button>
+            </div>
+
+            <label for="ownerHandoffUrl" style="margin-top:8px;">Handoff URL</label>
+          <textarea id="ownerHandoffUrl" rows="2" placeholder="Will appear here"></textarea>
+          </div>
+
+
+
+
+
+
+
           <div id="status" class="status" aria-live="polite"></div>
 
           <details class="details">

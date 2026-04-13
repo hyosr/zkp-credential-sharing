@@ -629,6 +629,17 @@ async function captureCurrentSession(tabId, serviceUrl, requestId) {
 
 
 
+async function resolveFinalCaptureToken(baseUrl, jwt, finalToken) {
+  const r = await fetch(`${baseUrl}/sharing/final-capture/resolve/${encodeURIComponent(finalToken)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${jwt}`,
+    },
+  });
+  if (!r.ok) throw new Error(`Resolve failed: ${r.status} ${await r.text()}`);
+  return await r.json();
+}
 
 
 
@@ -639,12 +650,84 @@ async function captureCurrentSession(tabId, serviceUrl, requestId) {
 
 
 
+
+
+
+
+
+
+
+
+
+console.log("[BG] loaded");
 
 
 
 
 // ---------- Messages from popup ----------
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+
+
+  console.log("[BG] message:", msg?.type);
+
+  if (msg?.type === "CREATE_OWNER_HANDOFF_WITH_REQUEST") {
+    (async () => {
+      try {
+        const baseUrl = (msg.baseUrl || "").trim();
+        const jwt = (msg.jwt || "").trim();
+        const requestId = (msg.requestId || "").trim();
+        const capture = msg.capture || {};
+
+        if (!baseUrl) throw new Error("Missing baseUrl");
+        if (!jwt) throw new Error("Missing jwt");
+        if (!requestId) throw new Error("Missing requestId");
+
+        const url = `${baseUrl}/sharing/owner-handoff/from-capture`;
+        console.log("[BG] POST", url);
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${jwt}`,
+          },
+          body: JSON.stringify({
+            request_id: requestId,
+            cookies: capture.cookies || [],
+            localStorage: capture.localStorage || "{}",
+            sessionStorage: capture.sessionStorage || "{}",
+            current_url: capture.current_url || null,
+            service_url: capture.service_url || null,
+          }),
+        });
+
+        const text = await res.text();
+        console.log("[BG] status:", res.status, text);
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
+        let out = {};
+        try { out = JSON.parse(text); } catch {}
+
+        const handoffUrl = out.handoff_url
+          ? `${baseUrl}${out.handoff_url}`
+          : `${baseUrl}/sharing/handoff/${out.handoff_session_id}`;
+
+        sendResponse({ ok: true, handoffUrl });
+      } catch (e) {
+        console.error("[BG] handoff create failed:", e);
+        sendResponse({ ok: false, error: String(e?.message || e) });
+      }
+    })();
+  return true;
+  }
+
+
+
+
+
+
+
+
   if (msg?.type === "RUN_HANDOFF") {
     (async () => {
       try {
@@ -712,7 +795,78 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+
+
+
+
+
+
+
+  if (msg?.type === "OPEN_CONNECTED_PROFILE_BY_TOKEN") {
+    (async () => {
+      try {
+        const baseUrl = msg.baseUrl || (await chrome.storage.local.get(["baseUrl"])).baseUrl;
+        const jwt = msg.jwt || (await chrome.storage.local.get(["jwt"])).jwt;
+        const finalToken = (msg.finalToken || "").trim();
+        if (!baseUrl || !jwt || !finalToken) throw new Error("Missing baseUrl/jwt/finalToken");
+
+        const resolved = await resolveFinalCaptureToken(baseUrl, jwt, finalToken);
+        const handoffUrl = `${baseUrl}${resolved.handoff_url}`;
+        await doHandoff(handoffUrl, msg.opts || {});
+        sendResponse({ ok: true, data: resolved });
+      } catch (e) {
+        sendResponse({ ok: false, error: String(e?.message || e) });
+      }
+    })();
+    return true;
+  }
+
+
+
+
+
+
+  if (msg?.type === "CREATE_HANDOFF_FROM_CAPTURE") {
+  (async () => {
+    try {
+      const baseUrl = msg.baseUrl;
+      const jwt = msg.jwt;
+      const capture = msg.capture; // {cookies, localStorage, sessionStorage, current_url, service_url}
+
+      const r = await fetch(`${baseUrl}/sharing/create-handoff`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${jwt}`,
+        },
+        body: JSON.stringify(capture),
+      });
+
+      if (!r.ok) throw new Error(await r.text());
+      const out = await r.json(); // expects {handoff_url: "..."} or {handoff_session_id: "..."}
+      const handoffUrl = out.handoff_url || `${baseUrl}/sharing/handoff/${out.handoff_session_id}`;
+
+      sendResponse({ ok: true, handoff_url: handoffUrl });
+    } catch (e) {
+      sendResponse({ ok: false, error: String(e?.message || e) });
+    }
+  })();
+  return true;
+}
+
+
+
+
+
+
 });
+
+
+
+
+
+
+
 
 // Auto-start owner polling when extension loads
 (async () => {
@@ -781,6 +935,8 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
   }
   
 })();
+
+
 
 
 
