@@ -367,15 +367,71 @@ async function doHandoff(handoffUrl, opts = {}) {
 /* ---------- Mode 2: Assisted (safe) ---------- */
 let assistedPollTimer = null;
 
+// async function assistedStartFlow(baseUrl, jwtToken, shareToken) {
+//   // Create assisted request
+//   const created = await apiPostJson(baseUrl, "/sharing/assisted/request", jwtToken, { share_token: shareToken });
+//   // const created = await apiPostJson(baseUrl, "/sharing/assisted/request", jwtToken, { token: shareToken });
+//   const requestId = created.request_id;
+
+//   await chrome.storage.local.set({ assistedRequestId: requestId });
+
+//   // Poll status until completed
+//   if (assistedPollTimer) clearInterval(assistedPollTimer);
+
+//   assistedPollTimer = setInterval(async () => {
+//     try {
+//       const st = await apiGetJson(
+//         baseUrl,
+//         `/sharing/assisted/${encodeURIComponent(requestId)}/status`,
+//         jwtToken
+//       );
+
+//       if (st.status === "completed" && st.handoff_token) {
+//         clearInterval(assistedPollTimer);
+//         assistedPollTimer = null;
+
+//         const url = `${baseUrl}/handoff?handoff_token=${encodeURIComponent(st.handoff_token)}&redirect_to=/app`;
+//         await chrome.tabs.create({ url, active: true });
+
+//         if (chrome.notifications?.create) {
+//           chrome.notifications.create(`assisted:done:${requestId}`, {
+//             type: "basic",
+//             // iconUrl: "icon128.png",
+//             title: "Assisted access ready",
+//             message: "Opening delegated session…",
+//             priority: 1,
+//           });
+//         }
+//       } else if (st.status === "expired" || st.status === "rejected") {
+//         clearInterval(assistedPollTimer);
+//         assistedPollTimer = null;
+
+//         if (chrome.notifications?.create) {
+//           chrome.notifications.create(`assisted:fail:${requestId}`, {
+//             type: "basic",
+//             // iconUrl: "icon128.png",
+//             title: "Assisted access failed",
+//             message: `Status: ${st.status}`,
+//             priority: 2,
+//           });
+//         }
+//       }
+//     } catch (e) {
+//       console.warn("assisted poll error:", e);
+//     }
+//   }, 2000);
+
+//   return { requestId };
+// }
+
+
+
 async function assistedStartFlow(baseUrl, jwtToken, shareToken) {
-  // Create assisted request
   const created = await apiPostJson(baseUrl, "/sharing/assisted/request", jwtToken, { share_token: shareToken });
-  // const created = await apiPostJson(baseUrl, "/sharing/assisted/request", jwtToken, { token: shareToken });
   const requestId = created.request_id;
 
   await chrome.storage.local.set({ assistedRequestId: requestId });
 
-  // Poll status until completed
   if (assistedPollTimer) clearInterval(assistedPollTimer);
 
   assistedPollTimer = setInterval(async () => {
@@ -386,43 +442,36 @@ async function assistedStartFlow(baseUrl, jwtToken, shareToken) {
         jwtToken
       );
 
-      if (st.status === "completed" && st.handoff_token) {
+      if (st.status === "completed" && st.handoff_url) {  // ← CHANGÉ
         clearInterval(assistedPollTimer);
         assistedPollTimer = null;
 
-        const url = `${baseUrl}/handoff?handoff_token=${encodeURIComponent(st.handoff_token)}&redirect_to=/app`;
-        await chrome.tabs.create({ url, active: true });
+        // Construire l'URL complète du handoff
+        const fullHandoffUrl = `${baseUrl}${st.handoff_url}`;  // ← CHANGÉ
+        
+        await doHandoff(fullHandoffUrl, {});  // Utiliser directement doHandoff
 
         if (chrome.notifications?.create) {
-          chrome.notifications.create(`assisted:done:${requestId}`, {
+          chrome.notifications.create({
             type: "basic",
-            // iconUrl: "icon128.png",
-            title: "Assisted access ready",
-            message: "Opening delegated session…",
-            priority: 1,
-          });
-        }
-      } else if (st.status === "expired" || st.status === "rejected") {
-        clearInterval(assistedPollTimer);
-        assistedPollTimer = null;
-
-        if (chrome.notifications?.create) {
-          chrome.notifications.create(`assisted:fail:${requestId}`, {
-            type: "basic",
-            // iconUrl: "icon128.png",
-            title: "Assisted access failed",
-            message: `Status: ${st.status}`,
-            priority: 2,
+            iconUrl: "icon32.png",
+            title: "Assisted Share Complete",
+            message: "Connected profile opened.",
           });
         }
       }
-    } catch (e) {
-      console.warn("assisted poll error:", e);
+    } catch (err) {
+      console.error("Assisted status poll error:", err);
     }
   }, 2000);
-
-  return { requestId };
 }
+
+
+
+
+
+
+
 
 /* ---------- Owner: pending polling + notification ---------- */
 let ownerPollTimer = null;
@@ -463,7 +512,39 @@ async function ownerStartPolling(baseUrl, jwtToken) {
         }
       }
     } catch (e) {
-      console.warn("owner pending poll error:", e);
+
+
+
+      const msg = String(e?.message || e);
+
+      // ✅ si JWT expiré/invalide: stop polling pour éviter un spam infini
+      if (msg.includes("failed: 401") || msg.includes(" 401 ") || msg.includes("Token invalide")) {
+        console.warn("[ownerStartPolling] JWT invalid/expired -> stopping polling. Please re-login / paste a new JWT.");
+        clearInterval(ownerPollTimer);
+        ownerPollTimer = null;
+
+        // optionnel: notifier l'utilisateur
+        if (chrome.notifications?.create) {
+          chrome.notifications.create("owner:jwt:expired", {
+          type: "basic",
+          title: "JWT expiré",
+          message: "Ton JWT backend est invalide/expiré. Ouvre l’extension et colle un nouveau JWT.",
+          priority: 2,
+      });
+    }
+      return;
+  }
+
+    console.warn("owner pending poll error:", e);
+
+
+
+
+      // console.warn("owner pending poll error:", e);
+
+
+
+
     }
   }, 5000);
 }
@@ -712,7 +793,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           ? `${baseUrl}${out.handoff_url}`
           : `${baseUrl}/sharing/handoff/${out.handoff_session_id}`;
 
-        sendResponse({ ok: true, handoffUrl });
+        // sendResponse({ ok: true, handoffUrl });
+
+        sendResponse({ ok: true, handoffUrl, handoff_url: handoffUrl });
       } catch (e) {
         console.error("[BG] handoff create failed:", e);
         sendResponse({ ok: false, error: String(e?.message || e) });

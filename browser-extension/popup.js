@@ -100,12 +100,38 @@ async function generateOwnerHandoff() {
 
     chrome.runtime.sendMessage(
       { type: "CREATE_OWNER_HANDOFF_WITH_REQUEST", baseUrl, jwt, requestId, capture },
+      // (resp) => {
+      //   if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message);
+      //   if (!resp?.ok) return alert(resp?.error || "Failed");
+      //   ownerHandoffUrlEl.value = resp.handoffUrl || "";
+      //   setStatus(statusEl, "Owner handoff URL generated ✅", "ok");
+      // }
+
+
+
+      // Dans generateOwnerHandoff(), remplace seulement le callback (resp) => { ... } par:
+
       (resp) => {
         if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message);
         if (!resp?.ok) return alert(resp?.error || "Failed");
-        ownerHandoffUrlEl.value = resp.handoffUrl || "";
-        setStatus(statusEl, "Owner handoff URL generated ✅", "ok");
+
+        // ✅ accepte camelCase et snake_case
+        const url = (resp.handoffUrl || resp.handoff_url || "").trim();
+
+        ownerHandoffUrlEl.value = url;
+        if (!url) {
+        // aide debug si le backend répond mais sans champ attendu
+          console.warn("No handoff url in response:", resp);
+          setStatus(statusEl, "Generated but no handoff URL returned (check console).", "err");
+          return;
       }
+
+        setStatus(statusEl, "Owner handoff URL generated ✅", "ok");
+}
+
+
+
+
     );
   } catch (e) {
     alert(e.message || String(e));

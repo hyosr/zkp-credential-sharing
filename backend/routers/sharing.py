@@ -99,27 +99,6 @@ def handoff_get(session_id: str):
         raise HTTPException(status_code=404, detail="Handoff session not found or expired")
 
 
-
-
-
-# # NEW: Validate recipient
-#     intended_recipient_id = data.get("recipient_id")
-#     if intended_recipient_id and current_user.id != intended_recipient_id:
-#         raise HTTPException(
-#             status_code=403,
-#             detail="You are not authorized to access this handoff session"
-#         )
-
-#     # Log access (optional but useful for debugging)
-#     print(f"[HANDOFF] User {current_user.id} accessed handoff {session_id}")
-#     print(f"[HANDOFF] Cookie count: {len(data.get('cookies', []))}")
-#     for c in data.get("cookies", []):
-#         print(f"[HANDOFF] Cookie: {c.get('name')} | Domain: {c.get('domain')} | Secure: {c.get('secure')}")
-
-
-
-
-
     return {
         "service_url": data.get("service_url"),
         "current_url": data.get("current_url"),
@@ -766,7 +745,6 @@ def assisted_approve(request_id: str, current_user: User = Depends(get_current_u
 
 
 
-# ... (début du fichier inchangé)
 
 @router.post("/assisted/{request_id}/session")
 def assisted_submit_session(
@@ -818,19 +796,37 @@ def assisted_submit_session(
 
 
     return {"handoff_session_id": handoff_session_id}
-# ... (suite du fichier inchangé)
 
 
 
 
 
+
+
+
+# @router.get("/assisted/{request_id}/status")
+# def assisted_status(request_id: str, current_user: User = Depends(get_current_user)):
+#     """Destinataire interroge le statut. Une fois completed, retourne handoff_session_id."""
+#     req = ASSISTED_REQUESTS.get(request_id)
+#     if not req:
+#         raise HTTPException(404, "Request not found")
+#     if current_user.id not in (req["owner_id"], req["recipient_id"]):
+#         raise HTTPException(403, "Not allowed")
+
+#     if req["expires_at"] <= time.time() and req["status"] in ("pending", "approved"):
+#         req["status"] = "expired"
+
+#     return {
+#         "status": req["status"],
+#         "handoff_session_id": req.get("handoff_session_id"),
+#         "expires_at": req["expires_at"],
+#     }
 
 
 
 
 @router.get("/assisted/{request_id}/status")
 def assisted_status(request_id: str, current_user: User = Depends(get_current_user)):
-    """Destinataire interroge le statut. Une fois completed, retourne handoff_session_id."""
     req = ASSISTED_REQUESTS.get(request_id)
     if not req:
         raise HTTPException(404, "Request not found")
@@ -840,11 +836,23 @@ def assisted_status(request_id: str, current_user: User = Depends(get_current_us
     if req["expires_at"] <= time.time() and req["status"] in ("pending", "approved"):
         req["status"] = "expired"
 
+    handoff_url = None
+    if req["status"] == "completed" and req.get("handoff_session_id"):
+        # Construire l'URL complète ici
+        handoff_url = f"/sharing/handoff/{req['handoff_session_id']}"
+
     return {
         "status": req["status"],
         "handoff_session_id": req.get("handoff_session_id"),
+        "handoff_url": handoff_url,  # ← AJOUTER
         "expires_at": req["expires_at"],
     }
+
+
+
+
+
+
 
 
 
