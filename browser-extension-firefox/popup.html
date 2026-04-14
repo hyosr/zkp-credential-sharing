@@ -192,8 +192,6 @@
 
 
 
-
-
           <div style="margin-top:12px; border-top:1px solid #ddd; padding-top:10px;">
             <label for="ownerRequestId">Request ID</label>
             <input id="ownerRequestId" type="text" placeholder="Paste request_id" />
@@ -202,42 +200,9 @@
               <button id="generateOwnerHandoff">Generate handoff URL (owner)</button>
               <button id="copyOwnerHandoff">Copy URL</button>
             </div>
-
             <label for="ownerHandoffUrl" style="margin-top:8px;">Handoff URL</label>
           <textarea id="ownerHandoffUrl" rows="2" placeholder="Will appear here"></textarea>
           </div>
-
-
-
-
-
-
-
-          <div class="section">
-            <div class="sectionTitle">
-              <h3>JSON Session (copy/paste)</h3>
-              <span class="pill">NO HANDOFF URL</span>
-            </div>
-
-            <div class="row">
-              <button id="captureJsonBtn" class="btn">Capture current session JSON</button>
-              <button id="copySessionJsonBtn" class="btn">Copy JSON</button>
-            </div>
-
-            <label class="label" for="sessionJson">Session JSON</label>
-            <textarea
-              id="sessionJson"
-              class="textarea"
-              rows="8"
-              placeholder='{"service_url":"https://recolyse.com","current_url":"https://recolyse.com/home","cookies":[{"name":"sid","value":"...","domain":"recolyse.com","path":"/","secure":true,"httpOnly":true}],"localStorage":"{}","sessionStorage":"{}"}'
-            ></textarea>
-
-            <div class="row">
-              <button id="injectJsonBtn" class="btn primary">Inject from JSON</button>
-            </div>
-          </div>
-
-          
 
 
 

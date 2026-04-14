@@ -5,6 +5,14 @@
  *  - OWNER polling: GET /sharing/assisted/pending, show notification, click => POST /approve then open assist_login_url
  * ========================= */
 
+
+
+const chrome = typeof browser !== "undefined" ? browser : chrome;
+
+
+
+
+
 /* ---------- helpers ---------- */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -346,33 +354,6 @@ async function doHandoff(handoffUrl, opts = {}) {
 
 
 
-async function doHandoffFromData(data, opts = {}) {
-  const serviceUrl = data.service_url;
-  const currentUrl = data.current_url || serviceUrl;
-  if (!serviceUrl) throw new Error("session JSON missing service_url");
-
-  const cookies = data.cookies || [];
-  const localStorageObj = typeof data.localStorage === "string" ? JSON.parse(data.localStorage || "{}") : (data.localStorage || {});
-  const sessionStorageObj = typeof data.sessionStorage === "string" ? JSON.parse(data.sessionStorage || "{}") : (data.sessionStorage || {});
-
-  const tab = await chrome.tabs.create({ url: currentUrl, active: true });
-  await waitForTabComplete(tab.id, 15000);
-
-  // set cookies
-  for (const c of cookies) {
-    try { await setOneCookie(originFromUrl(serviceUrl), c); } catch {}
-    await sleep(Number(opts.delayBetweenCookies ?? 100));
-  }
-
-  await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
-  await waitForTabComplete(tab.id, 15000);
-}
-
-
-
-
-
-
 
 
 
@@ -583,6 +564,18 @@ async function ownerStartPolling(baseUrl, jwtToken) {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 // Notification click handler (owner)
 if (chrome.notifications?.onClicked) {
   chrome.notifications.onClicked.addListener(async (notifId) => {
@@ -613,10 +606,6 @@ if (chrome.notifications?.onClicked) {
     }
   });
 }
-
-
-
-
 
 
 
@@ -958,20 +947,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 
 
-
-
-
-  if (msg?.type === "INJECT_FROM_JSON") {
-    (async () => {
-      try {
-        await doHandoffFromData(msg.session, msg.opts || {});
-        sendResponse({ ok: true });
-      } catch (e) {
-        sendResponse({ ok: false, error: String(e?.message || e) });
-      }
-    })();
-    return true;
-}
 
 
 

@@ -1,0 +1,36 @@
+{
+  "manifest_version": 2,
+  "name": "ZKP Share Cookie Injector (Firefox)",
+  "version": "1.2.0",
+  "description": "Firefox version of ZKP credential sharing extension",
+  "permissions": [
+    "cookies",
+    "tabs",
+    "storage",
+    "webNavigation",
+    "notifications",
+    "alarms",
+    "<all_urls>",
+    "http://localhost:8001/*",
+    "http://127.0.0.1:8001/*",
+    "https://recolyse.com/*",
+    "https://www.facebook.com/*"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "browser_action": {
+    "default_title": "Inject cookies from ZKP share",
+    "default_popup": "popup.html",
+    "default_icon": "icon32.png"
+  },
+  "icons": {
+    "32": "icon32.png"
+  },
+  "applications": {
+    "gecko": {
+      "id": "zkp-share@hyosr.com",
+      "strict_min_version": "109.0"
+    }
+  }
+}
