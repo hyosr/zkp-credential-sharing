@@ -39,6 +39,12 @@ from backend.schemas.sharing import RelayLoginRequest
 router = APIRouter(prefix="/sharing", tags=["Secure Sharing"])
 encryptor = ShareEncryptor()
 
+
+MAX_TTL_MINUTES = 24 * 60   # ✅ exemple: 24 heures max
+MIN_TTL_MINUTES = 1         # ✅ minimum 1 minute
+
+
+
 # ─── Handoff store (ONE source of truth) ───────────────────────────────────────
 COOKIE_HANDOFF_STORE: dict[str, dict] = {}
 COOKIE_HANDOFF_LOCK = Lock()
@@ -94,7 +100,7 @@ def handoff_get(session_id: str):
     Returns cookies + localStorage + sessionStorage + current_url.
     Consumed on first read.
     """
-    data = _handoff_store_get(session_id)
+    data = _handoff_store_consume(session_id)
     if not data:
         raise HTTPException(status_code=404, detail="Handoff session not found or expired")
 
@@ -158,11 +164,23 @@ class AccessShareRequest(BaseModel):
     token: str
 
 
+# class ShareIntentRequest(BaseModel):
+#     credential_id: int
+#     recipient_email: str
+#     permission: str = "read_once"
+#     ttl_hours: int = 24
+#     max_uses: int = 1
+
+
+
 class ShareIntentRequest(BaseModel):
     credential_id: int
     recipient_email: str
     permission: str = "read_once"
-    ttl_hours: int = 24
+    # Backward compatible field (old UI)
+    ttl_hours: int | None = None
+    # ✅ New: minutes-based TTL
+    ttl_minutes: int | None = 60
     max_uses: int = 1
 
 
@@ -197,7 +215,7 @@ def create_share(
         .first()
     )
     if not cred:
-        raise HTTPException(status_code=404, detail="Credential non trouvé")
+        raise HTTPException(status_code=404, detail="Credential not found")
 
     share_token = generate_share_token(
         credential_id=req.credential_id,
@@ -249,7 +267,7 @@ def access_share(
 
     share_info = validate_token(req.token, requester_email)
     if not share_info:
-        raise HTTPException(status_code=403, detail="Token invalide, expiré, ou email non autorisé")
+        raise HTTPException(status_code=403, detail="Token invalid, expired, or email not authorized")
 
     token_hash = hashlib.sha256(req.token.encode()).hexdigest()
     shared = (
@@ -262,11 +280,11 @@ def access_share(
     )
 
     if not shared:
-        raise HTTPException(status_code=404, detail="Partage non trouvé")
+        raise HTTPException(status_code=404, detail="Share not found")
     if time.time() > shared.expires_at:
-        raise HTTPException(status_code=403, detail="Partage expiré")
+        raise HTTPException(status_code=403, detail="Share expired")
     if (shared.recipient_email or "").strip().lower() != requester_email:
-        raise HTTPException(status_code=403, detail="Email non autorisé pour ce partage")
+        raise HTTPException(status_code=403, detail="Email not authorized for this share")
 
     ip = request.client.host if request.client else "unknown"
     ua = request.headers.get("user-agent", "unknown")
@@ -322,6 +340,77 @@ def list_my_shares(
     return result
 
 
+
+
+
+
+
+class IncreaseMaxUsesRequest(BaseModel):
+    add_uses: int = 1
+
+@router.post("/increase-max-uses/{share_id}")
+def increase_max_uses(
+    share_id: int,
+    payload: IncreaseMaxUsesRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Owner can increment max_uses for an existing share (without changing token).
+    Useful if you want to extend usage after creation.
+    """
+    if payload.add_uses <= 0:
+        raise HTTPException(status_code=400, detail="add_uses must be > 0")
+
+    shared = (
+        db.query(SharedAccess)
+        .filter(
+            SharedAccess.id == share_id,
+            SharedAccess.owner_id == current_user.id,
+        )
+        .first()
+    )
+    if not shared:
+        raise HTTPException(status_code=404, detail="Share not found")
+
+    # Do not allow changes if already expired
+    if time.time() > shared.expires_at:
+        raise HTTPException(status_code=400, detail="Share is expired")
+
+    shared.max_uses += int(payload.add_uses)
+
+    # If it was revoked because it reached max uses, you may optionally "unrevoke" it
+    # ONLY if you want that behavior:
+    if shared.is_revoked and shared.use_count < shared.max_uses:
+        shared.is_revoked = False
+        shared.revoked_at = None
+
+    db.commit()
+    db.refresh(shared)
+
+    return {
+        "message": "max_uses increased",
+        "share_id": shared.id,
+        "use_count": shared.use_count,
+        "max_uses": shared.max_uses,
+        "is_revoked": shared.is_revoked,
+        "expires_at": shared.expires_at,
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @router.delete("/revoke/{share_id}")
 def revoke_share(
     share_id: int,
@@ -337,11 +426,11 @@ def revoke_share(
         .first()
     )
     if not shared:
-        raise HTTPException(status_code=404, detail="Partage non trouvé")
+        raise HTTPException(status_code=404, detail="Share not found")
     shared.is_revoked = True
     shared.revoked_at = time.time()
     db.commit()
-    return {"message": "Partage révoqué avec succès"}
+    return {"message": "Share revoked successfully"}
 
 
 @router.get("/audit/{share_id}")
@@ -359,7 +448,7 @@ def get_audit_log(
         .first()
     )
     if not shared:
-        raise HTTPException(status_code=404, detail="Partage non trouvé")
+        raise HTTPException(status_code=404, detail="Share not found")
 
     log = json.loads(shared.access_log or "[]")
     cred = db.query(Credential).filter(Credential.id == shared.credential_id).first()
@@ -390,7 +479,7 @@ async def relay_login(
     # 1) Validate token against authenticated email (zero-trust)
     share_info = validate_and_consume_token(req.token, requester_email)
     if not share_info:
-        raise HTTPException(status_code=403, detail="Token invalide, expiré, ou email non autorisé")
+        raise HTTPException(status_code=403, detail="Token invalid, expired, or email not authorized")
 
     # 2) Load share from DB
     token_hash = hashlib.sha256(req.token.encode()).hexdigest()
@@ -404,17 +493,17 @@ async def relay_login(
     )
 
     if not shared:
-        raise HTTPException(status_code=404, detail="Partage non trouvé")
+        raise HTTPException(status_code=404, detail="Share not found")
     if time.time() > shared.expires_at:
-        raise HTTPException(status_code=403, detail="Partage expiré")
+        raise HTTPException(status_code=403, detail="Share expired")
 
     shared_recipient = (shared.recipient_email or "").strip().lower()
     if shared_recipient != requester_email:
-        raise HTTPException(status_code=403, detail="Email non autorisé pour ce partage")
+        raise HTTPException(status_code=403, detail="Email not authorized for this share")
 
     cred = db.query(Credential).filter(Credential.id == shared.credential_id).first()
     if not cred:
-        raise HTTPException(status_code=404, detail="Credential non trouvé")
+        raise HTTPException(status_code=404, detail="Credential not found")
 
     service_url = (req.service_url_override or (cred.service_url or "")).strip()
     if not service_url:
@@ -479,7 +568,11 @@ async def relay_login(
     ua = request.headers.get("user-agent", "unknown")
     shared.add_access_log_entry(ip, ua)
 
-    if shared.permission == "read_once" and shared.use_count >= shared.max_uses:
+    # if shared.permission == "read_once" and shared.use_count >= shared.max_uses:
+    #     shared.is_revoked = True
+    #     shared.revoked_at = time.time()
+
+    if shared.use_count >= shared.max_uses:
         shared.is_revoked = True
         shared.revoked_at = time.time()
 
@@ -517,16 +610,60 @@ def create_share_intent(
         .first()
     )
     if not cred:
-        raise HTTPException(status_code=404, detail="Credential non trouvé")
+        raise HTTPException(status_code=404, detail="Credential not found")
+    
+
+
+        # ---- TTL handling (minutes, with backward compatibility) ----
+    ttl_minutes = req.ttl_minutes
+
+    # If old client only sends ttl_hours, convert it
+    if (ttl_minutes is None or ttl_minutes <= 0) and req.ttl_hours is not None:
+        ttl_minutes = int(req.ttl_hours) * 60
+
+    if ttl_minutes is None:
+        ttl_minutes = 60
+
+    if ttl_minutes < MIN_TTL_MINUTES:
+        raise HTTPException(status_code=400, detail=f"ttl_minutes must be >= {MIN_TTL_MINUTES}")
+
+    if ttl_minutes > MAX_TTL_MINUTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"ttl_minutes too large (max {MAX_TTL_MINUTES} minutes)",
+        )
+
+    ttl_seconds = int(ttl_minutes) * 60
+
+
+
+
+
+    # share_token = generate_share_token(
+    #     credential_id=req.credential_id,
+    #     owner_id=current_user.id,
+    #     recipient_email=req.recipient_email,
+    #     permission=req.permission,
+    #     ttl_hours=req.ttl_hours,
+    #     max_uses=req.max_uses,
+    # )
+
+
+
+    # Keep generate_share_token signature (ttl_hours) by converting back safely
+    ttl_hours_for_token = max(1, int((ttl_seconds + 3599) // 3600))
 
     share_token = generate_share_token(
         credential_id=req.credential_id,
         owner_id=current_user.id,
         recipient_email=req.recipient_email,
         permission=req.permission,
-        ttl_hours=req.ttl_hours,
+        ttl_hours=ttl_hours_for_token,
         max_uses=req.max_uses,
     )
+
+
+
 
     token_hash = hashlib.sha256(share_token.encode()).hexdigest()
 
@@ -539,7 +676,8 @@ def create_share_intent(
         share_key=share_token,
         permission=req.permission,
         max_uses=req.max_uses,
-        expires_at=time.time() + req.ttl_hours * 3600,
+        # expires_at=time.time() + req.ttl_hours * 3600,
+        expires_at=time.time() + ttl_seconds,
         created_at=time.time(),
     )
     db.add(shared)
@@ -575,9 +713,9 @@ def finalize_share(
     )
 
     if not shared:
-        raise HTTPException(status_code=404, detail="Partage non trouvé (ou déjà révoqué)")
+        raise HTTPException(status_code=404, detail="Share not found (or already revoked)")
     if time.time() > shared.expires_at:
-        raise HTTPException(status_code=403, detail="Partage expiré")
+        raise HTTPException(status_code=403, detail="Share expired")
 
     try:
         d = json.loads(req.encrypted_payload)
@@ -592,7 +730,7 @@ def finalize_share(
     if not shared.share_key:
         raise HTTPException(status_code=500, detail="Share has no share_key set (data integrity error)")
 
-    return {"message": "Partage finalisé. Envoyez le token au destinataire."}
+    return {"message": "Share finalized. Send the token to the recipient."}
 
 
 
@@ -652,11 +790,11 @@ def assisted_create_request(
         SharedAccess.is_revoked == False,
     ).first()
     if not shared or time.time() > shared.expires_at:
-        raise HTTPException(404, "Partage non trouvé ou expiré")
+        raise HTTPException(404, "Share not found or expired")
 
     cred = db.query(Credential).filter(Credential.id == shared.credential_id).first()
     if not cred:
-        raise HTTPException(404, "Credential non trouvé")
+        raise HTTPException(404, "Credential not found")
 
     service_url = cred.service_url or ""
     if not service_url:

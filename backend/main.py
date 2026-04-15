@@ -11,6 +11,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
+
 from backend.models.database import create_tables
 from backend.routers import auth, credentials, sharing
 from backend.routers import keycloak_sharing  # <-- add
@@ -68,6 +71,29 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response: Response = await call_next(request)
+        # Prevent MIME type sniffing
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        # Prevent clickjacking (optional but recommended)
+        response.headers["X-Frame-Options"] = "DENY"
+        # Enable browser XSS filtering (deprecated but harmless)
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        # Strict Transport Security (only for HTTPS – uncomment if you use HTTPS)
+        # response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+
+# Add the middleware to the app
+app.add_middleware(SecurityHeadersMiddleware)
+
+
+
 
 # ─── Middleware ────────────────────────────────────────────────────────────────
 

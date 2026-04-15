@@ -1009,7 +1009,7 @@ function isBridgeUrl(url) {
   try {
     const u = new URL(url);
     return (
-      u.origin === "http://localhost:8001" &&
+      u.origin === "https://localhost:8001" &&
       u.pathname === "/extension/connect" &&
       u.searchParams.get("handoff")
     );

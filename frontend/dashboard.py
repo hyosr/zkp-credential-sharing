@@ -25,7 +25,12 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
-API_URL = os.getenv("ZKP_API_URL", "http://localhost:8001")
+# API_URL = os.getenv("ZKP_API_URL", "http://localhost:8001")
+
+
+API_URL = os.getenv("ZKP_API_URL", "https://localhost:8001")
+
+
 
 # ZKP parameters (identical to the server)
 P = int(
@@ -142,6 +147,12 @@ def decrypt_from_share(encrypted_json: str, share_token: str) -> str:
 # ─── API Helpers ──────────────────────────────────────────────────────────────
 
 def api_post(endpoint: str, data: dict, token: str = None) -> dict:
+
+    full_url = f"{API_URL}{endpoint}"
+    print(f"[API_POST] {full_url} -> data={data}")   # ← log
+
+
+
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -165,6 +176,13 @@ def api_post(endpoint: str, data: dict, token: str = None) -> dict:
 
 
 def api_get(endpoint: str, token: str = None) -> dict:
+
+
+    full_url = f"{API_URL}{endpoint}"
+    print(f"[API_GET] {full_url}")   # ← log 
+
+
+
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -497,6 +515,8 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded",
     )
+
+    st.write(f"**API_URL = {API_URL}**")
 
     _inject_theme()
     _init_session_state()
@@ -854,7 +874,7 @@ def page_final_capture_share():
         st.subheader("Owner finishes login -> paste handoff URL -> generate final token")
         req_id_default = st.session_state.get("final_capture_request_id", "")
         req_id = st.text_input("Request ID", value=req_id_default)
-        handoff_url = st.text_input("Handoff URL", placeholder="http://localhost:8001/sharing/handoff/<session_id>")
+        handoff_url = st.text_input("Handoff URL", placeholder="https://localhost:8001/sharing/handoff/<session_id>")
 
         if st.button("Finish + Generate token"):
             payload = {
@@ -1260,18 +1280,88 @@ def page_share():
 
     cred_options = {f"{c['name']} (ID:{c['id']})": c['id'] for c in creds}
 
+    # with st.form("share_form"):
+    #     selected = st.selectbox("Credential to share", list(cred_options.keys()))
+    #     recipient_email = st.text_input("Recipient email")
+    #     secret_to_share = st.text_input(
+    #         "Secret to share (decrypted locally)",
+    #         type="password",
+    #         help="Enter the secret as it will be received by the recipient",
+    #     )
+    #     # permission = st.selectbox("Permission", ["read_once", "read"])
+    #     # ttl_hours = st.slider("Validity duration (hours)", 1, 168, 24)
+    #     # max_uses = st.number_input("Max uses", 1, 10, 1)
+
+
+    #     permission = st.selectbox("Permission", ["read_once", "read"])
+
+    #     # ✅ TTL in minutes (example max 24h = 1440 min)
+    #     ttl_minutes = st.number_input(
+    #         "Validity duration (minutes)",
+    #         min_value=1,
+    #         max_value=24 * 60,
+    #         value=60,
+    #         step=5,
+    #         help="Example: 30 = 30 minutes, 1440 = 24 hours",
+    #     )
+
+    #     # ✅ If permission is read_once, force max_uses=1 in UI
+    #     if permission == "read_once":
+    #         max_uses = 1
+    #         st.caption("read_once: max_uses is forced to 1.")
+    #     else:
+    #         max_uses = st.number_input("Max uses", 1, 50, 5)
+    #         submitted = st.form_submit_button("Create share", use_container_width=True)
+
+
+
     with st.form("share_form"):
         selected = st.selectbox("Credential to share", list(cred_options.keys()))
         recipient_email = st.text_input("Recipient email")
+
         secret_to_share = st.text_input(
             "Secret to share (decrypted locally)",
             type="password",
             help="Enter the secret as it will be received by the recipient",
         )
-        permission = st.selectbox("Permission", ["read_once", "read"])
-        ttl_hours = st.slider("Validity duration (hours)", 1, 168, 24)
-        max_uses = st.number_input("Max uses", 1, 10, 1)
+
+        # permission = st.selectbox("Permission", ["read_once", "read"])
+
+
+        permission = "read"
+
+
+        # TTL minutes (max réduit)
+        ttl_minutes = st.number_input(
+            "Validity duration (minutes)",
+            min_value=1,
+            max_value=24 * 60,   # 1440 minutes = 24h (change si tu veux)
+            value=60,
+            step=5,
+            help="Example: 30 = 30 minutes, 1440 = 24 hours",
+        )   
+
+        # max_uses: read_once => 1, read => multiple
+        # if permission == "read_once":
+        #     max_uses = 1
+        #     st.caption("read_once: max_uses is forced to 1.")
+        # else:
+        #     max_uses = st.number_input("Max uses", min_value=1, max_value=50, value=5, step=1)
+
+
+
+        max_uses = st.number_input(
+            "Max uses",
+            min_value=1,
+            max_value=50,
+            value=1 if permission == "read_once" else 5,
+            step=1,
+            help="How many times the token can be used before being revoked.",
+        )
+        # ✅ IMPORTANT: submit button inside the form
         submitted = st.form_submit_button("Create share", use_container_width=True)
+
+
 
     if submitted and recipient_email and secret_to_share:
         cred_id = cred_options[selected]
@@ -1281,7 +1371,9 @@ def page_share():
                 "credential_id": cred_id,
                 "recipient_email": recipient_email,
                 "permission": permission,
-                "ttl_hours": ttl_hours,
+                # "ttl_hours": ttl_hours,
+                # "max_uses": int(max_uses),
+                "ttl_minutes": int(ttl_minutes),
                 "max_uses": int(max_uses),
             }, token=token)
 
@@ -1508,6 +1600,47 @@ def render_handoff_ui(service_url: str, session_id: str):
         )
 
 
+# def page_audit():
+#     st.title("📋 Audit Trail")
+#     token = st.session_state.jwt_token
+#     if not token:
+#         st.error("Not logged in")
+#         return
+
+#     shares = api_get("/sharing/my-shares", token=token)
+#     if not isinstance(shares, list):
+#         st.error("API error")
+#         return
+#     if not shares:
+#         st.info("No active shares.")
+#         return
+
+#     for s in shares:
+#         status = "✅ Active" if not s.get("is_expired") else "⏰ Expired"
+#         with st.expander(f"{status} | {s['credential_name']} → {s['recipient_email']}"):
+
+#             col1, col2 = st.columns(2, gap="large")
+#             with col1:
+#                 st.write(f"**Permission:** {s['permission']}")
+#                 st.write(f"**Uses:** {s['use_count']}/{s['max_uses']}")
+#                 st.write(f"**Expires:** {time.strftime('%Y-%m-%d %H:%M', time.localtime(s['expires_at']))}")
+#             with col2:
+#                 if st.button("View detailed audit", key=f"audit_{s['share_id']}"):
+#                     audit = api_get(f"/sharing/audit/{s['share_id']}", token=token)
+#                     st.json(audit)
+#                 if st.button("Revoke", key=f"rev_{s['share_id']}"):
+#                     res = requests.delete(
+#                         f"{API_URL}/sharing/revoke/{s['share_id']}",
+#                         headers={"Authorization": f"Bearer {token}"}
+#                     ).json()
+#                     st.success(res.get("message", "Revoked"))
+#                     st.rerun()
+
+
+
+
+
+
 def page_audit():
     st.title("📋 Audit Trail")
     token = st.session_state.jwt_token
@@ -1526,15 +1659,19 @@ def page_audit():
     for s in shares:
         status = "✅ Active" if not s.get("is_expired") else "⏰ Expired"
         with st.expander(f"{status} | {s['credential_name']} → {s['recipient_email']}"):
+
             col1, col2 = st.columns(2, gap="large")
+
             with col1:
                 st.write(f"**Permission:** {s['permission']}")
                 st.write(f"**Uses:** {s['use_count']}/{s['max_uses']}")
                 st.write(f"**Expires:** {time.strftime('%Y-%m-%d %H:%M', time.localtime(s['expires_at']))}")
+
             with col2:
                 if st.button("View detailed audit", key=f"audit_{s['share_id']}"):
                     audit = api_get(f"/sharing/audit/{s['share_id']}", token=token)
                     st.json(audit)
+
                 if st.button("Revoke", key=f"rev_{s['share_id']}"):
                     res = requests.delete(
                         f"{API_URL}/sharing/revoke/{s['share_id']}",
@@ -1542,6 +1679,38 @@ def page_audit():
                     ).json()
                     st.success(res.get("message", "Revoked"))
                     st.rerun()
+
+                # ✅ PUT IT HERE (actions area)
+                st.divider()
+                st.subheader("Increase max uses")
+
+                add = st.number_input(
+                    "Add uses",
+                    min_value=1,
+                    max_value=50,
+                    value=1,
+                    step=1,
+                    key=f"add_{s['share_id']}",
+                )
+
+                if st.button("Increase max uses", key=f"inc_{s['share_id']}"):
+                    resp = api_post(
+                        f"/sharing/increase-max-uses/{s['share_id']}",
+                        {"add_uses": int(add)},
+                        token=token,
+                    )
+                    if resp.get("message"):
+                        st.success(f"✅ Updated: {resp.get('use_count')} / {resp.get('max_uses')}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Failed: {resp}")
+
+
+
+
+
+
+
 
 
 def page_about_zkp():
