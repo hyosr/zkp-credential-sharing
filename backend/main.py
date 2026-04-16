@@ -46,6 +46,7 @@ from backend.routers.owner_handoff import router as owner_handoff_router
 
 
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialisation au démarrage."""
@@ -78,14 +79,23 @@ app = FastAPI(
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response: Response = await call_next(request)
+        
         # Prevent MIME type sniffing
         response.headers["X-Content-Type-Options"] = "nosniff"
+        
         # Prevent clickjacking (optional but recommended)
         response.headers["X-Frame-Options"] = "DENY"
+        
         # Enable browser XSS filtering (deprecated but harmless)
         response.headers["X-XSS-Protection"] = "1; mode=block"
-        # Strict Transport Security (only for HTTPS – uncomment if you use HTTPS)
-        # response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        # Strict Transport Security (only for HTTPS )
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        # Add Cache-Control header for all responses
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+
         return response
 
 

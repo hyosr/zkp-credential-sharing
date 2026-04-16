@@ -131,16 +131,28 @@ pip install -r requirements.txt
 export PLAYWRIGHT_HEADLESS=1
 
 uvicorn backend.main:app --reload --port 8001
+
+uvicorn backend.main:app --host 0.0.0.0 --port 8001 --ssl-keyfile=key.pem --ssl-certfile=cert.pem 
+
 ```
 
 Check:
-- `http://localhost:8001/health`
-- `http://localhost:8001/docs`
+- `https://localhost:8001/health`
+- `https://localhost:8001/docs`
 
 ### 3) Run Streamlit dashboard
 ```bash
 export ZKP_API_URL=http://localhost:8001
 streamlit run frontend/dashboard.py --server.port 8502
+
+
+streamlit run frontend/dashboard.py \  --server.sslCertFile=cert.pem \
+  --server.sslKeyFile=key.pem \
+  --server.port 8502
+
+
+
+  
 ```
 
 Open:
