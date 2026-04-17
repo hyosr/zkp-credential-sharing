@@ -19,16 +19,19 @@ from typing import Optional
 
 import urllib
 
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 import requests
 import streamlit as st
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
-# API_URL = os.getenv("ZKP_API_URL", "http://localhost:8001")
+API_URL = os.getenv("ZKP_API_URL", "http://localhost:8001")
 
 
-API_URL = os.getenv("ZKP_API_URL", "https://localhost:8001")
+# API_URL = os.getenv("ZKP_API_URL", "https://localhost:8001")
 
 
 
@@ -3542,7 +3545,7 @@ if __name__ == "__main__":
 #         )
 
 
-
+ 
 
 
 

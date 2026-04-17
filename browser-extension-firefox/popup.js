@@ -1,7 +1,4 @@
-const chrome = typeof browser !== "undefined" ? browser : chrome;
-
-
-
+const ext = typeof browser !== "undefined" ? browser : chrome;
 
 const DEFAULT_BASE = "http://127.0.0.1:8001";
 
@@ -34,10 +31,9 @@ function setLoading(btn, spinner, goText, isLoading) {
 // ---------- DOM refs ----------
 let baseUrlEl, tokenEl, goBtn, clearBtn, statusEl, spinner, goText;
 let delayBetweenCookiesEl, delayAfterInjectEl, jwtEl;
-let assistedTokenEl, assistedStartBtn;
-let pendingListEl, refreshPendingBtn, finishBtn;
 let ownerRequestIdEl, ownerHandoffUrlEl, generateOwnerHandoffBtn, copyOwnerHandoffBtn;
 let finalTokenEl, openByFinalTokenBtn;
+let sessionJsonEl, injectJsonBtn, captureJsonBtn, copySessionJsonBtn;
 
 // ---------- existing handoff run ----------
 async function runHandoff() {
@@ -51,11 +47,11 @@ async function runHandoff() {
   if (!handoffUrl) return setStatus(statusEl, "Paste token/session_id or full handoff URL.", "err");
 
   setLoading(goBtn, spinner, goText, true);
-  await chrome.storage.local.set({ handoffUrl, baseUrl, ...opts, jwt: (jwtEl?.value || "").trim() });
+  await ext.storage.local.set({ handoffUrl, baseUrl, ...opts, jwt: (jwtEl?.value || "").trim() });
 
-  chrome.runtime.sendMessage({ type: "RUN_HANDOFF", handoffUrl, opts }, (resp) => {
+  ext.runtime.sendMessage({ type: "RUN_HANDOFF", handoffUrl, opts }, (resp) => {
     setLoading(goBtn, spinner, goText, false);
-    if (chrome.runtime.lastError) return setStatus(statusEl, chrome.runtime.lastError.message, "err");
+    if (ext.runtime.lastError) return setStatus(statusEl, ext.runtime.lastError.message, "err");
     if (!resp?.ok) return setStatus(statusEl, `Failed: ${resp?.error || "unknown"}`, "err");
     setStatus(statusEl, "Success. Opening connected profile…", "ok");
     setTimeout(() => window.close(), 400);
@@ -64,21 +60,23 @@ async function runHandoff() {
 
 // ---------- owner capture helpers ----------
 async function captureCurrentSession() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await ext.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !tab?.url) throw new Error("No active tab");
 
-  const cookies = await chrome.cookies.getAll({ url: tab.url });
+  const cookies = await ext.cookies.getAll({ url: tab.url });
 
-  const exec = await chrome.scripting.executeScript({
+  const exec = await ext.scripting.executeScript({
     target: { tabId: tab.id },
     func: () => {
       const ls = {};
       const ss = {};
       for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i); ls[k] = localStorage.getItem(k);
+        const k = localStorage.key(i);
+        ls[k] = localStorage.getItem(k);
       }
       for (let i = 0; i < sessionStorage.length; i++) {
-        const k = sessionStorage.key(i); ss[k] = sessionStorage.getItem(k);
+        const k = sessionStorage.key(i);
+        ss[k] = sessionStorage.getItem(k);
       }
       return {
         localStorage: JSON.stringify(ls),
@@ -103,40 +101,23 @@ async function generateOwnerHandoff() {
 
     const capture = await captureCurrentSession();
 
-    chrome.runtime.sendMessage(
+    ext.runtime.sendMessage(
       { type: "CREATE_OWNER_HANDOFF_WITH_REQUEST", baseUrl, jwt, requestId, capture },
-      // (resp) => {
-      //   if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message);
-      //   if (!resp?.ok) return alert(resp?.error || "Failed");
-      //   ownerHandoffUrlEl.value = resp.handoffUrl || "";
-      //   setStatus(statusEl, "Owner handoff URL generated ✅", "ok");
-      // }
-
-
-
-      // Dans generateOwnerHandoff(), remplace seulement le callback (resp) => { ... } par:
-
       (resp) => {
-        if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message);
+        if (ext.runtime.lastError) return alert(ext.runtime.lastError.message);
         if (!resp?.ok) return alert(resp?.error || "Failed");
 
-        // ✅ accepte camelCase et snake_case
         const url = (resp.handoffUrl || resp.handoff_url || "").trim();
-
         ownerHandoffUrlEl.value = url;
+
         if (!url) {
-        // aide debug si le backend répond mais sans champ attendu
           console.warn("No handoff url in response:", resp);
           setStatus(statusEl, "Generated but no handoff URL returned (check console).", "err");
           return;
-      }
+        }
 
         setStatus(statusEl, "Owner handoff URL generated ✅", "ok");
-}
-
-
-
-
+      }
     );
   } catch (e) {
     alert(e.message || String(e));
@@ -157,14 +138,62 @@ async function openConnectedByFinalToken() {
   const finalToken = (finalTokenEl?.value || "").trim();
   if (!jwt || !finalToken) return alert("JWT and final token are required");
 
-  chrome.runtime.sendMessage(
+  ext.runtime.sendMessage(
     { type: "OPEN_CONNECTED_PROFILE_BY_TOKEN", baseUrl, jwt, finalToken, opts: {} },
     (resp) => {
-      if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message);
+      if (ext.runtime.lastError) return alert(ext.runtime.lastError.message);
       if (!resp?.ok) return alert(resp?.error || "Failed");
       alert("Connected profile opened ✅");
     }
   );
+}
+
+// ---------- JSON capture/inject ----------
+async function captureSessionJson() {
+  try {
+    const data = await captureCurrentSession();
+    const payload = {
+      service_url: data.service_url || data.current_url,
+      current_url: data.current_url,
+      cookies: data.cookies || [],
+      localStorage: data.localStorage || "{}",
+      sessionStorage: data.sessionStorage || "{}",
+    };
+    sessionJsonEl.value = JSON.stringify(payload, null, 2);
+    setStatus(statusEl, "Session JSON captured ✅", "ok");
+  } catch (e) {
+    alert(e.message || String(e));
+  }
+}
+
+async function copySessionJson() {
+  const txt = (sessionJsonEl?.value || "").trim();
+  if (!txt) return alert("No JSON to copy");
+  await navigator.clipboard.writeText(txt);
+  alert("JSON copied ✅");
+}
+
+async function injectFromJson() {
+  try {
+    const txt = (sessionJsonEl?.value || "").trim();
+    if (!txt) return alert("Paste session JSON first");
+    const session = JSON.parse(txt);
+
+    ext.runtime.sendMessage(
+      {
+        type: "FORCE_INJECT_JSON_CURRENT_TAB",
+        session,
+        opts: { delayBetweenCookies: 60 },
+      },
+      (resp) => {
+        if (ext.runtime.lastError) return alert(ext.runtime.lastError.message);
+        if (!resp?.ok) return alert(resp?.error || "Force inject failed");
+        alert("Force injection done ✅\nNow manually type exact URL and click reload.");
+      }
+    );
+  } catch (e) {
+    alert("Invalid JSON: " + (e.message || e));
+  }
 }
 
 // ---------- boot ----------
@@ -180,10 +209,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   delayAfterInjectEl = document.getElementById("delayAfterInject");
   jwtEl = document.getElementById("jwt");
 
-  pendingListEl = document.getElementById("pendingList");
-  refreshPendingBtn = document.getElementById("refreshPending");
-  finishBtn = document.getElementById("finishLogin");
-
   ownerRequestIdEl = document.getElementById("ownerRequestId");
   ownerHandoffUrlEl = document.getElementById("ownerHandoffUrl");
   generateOwnerHandoffBtn = document.getElementById("generateOwnerHandoff");
@@ -192,14 +217,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   finalTokenEl = document.getElementById("finalToken");
   openByFinalTokenBtn = document.getElementById("openByFinalToken");
 
-  const saved = await chrome.storage.local.get(["baseUrl", "jwt", "handoffUrl"]);
-  baseUrlEl.value = saved.baseUrl || DEFAULT_BASE;
-  if (saved.jwt) jwtEl.value = saved.jwt;
+  sessionJsonEl = document.getElementById("sessionJson");
+  injectJsonBtn = document.getElementById("injectJsonBtn");
+  captureJsonBtn = document.getElementById("captureJsonBtn");
+  copySessionJsonBtn = document.getElementById("copySessionJsonBtn");
+
+  const saved = await ext.storage.local.get(["baseUrl", "jwt", "handoffUrl"]);
+  if (baseUrlEl) baseUrlEl.value = saved.baseUrl || DEFAULT_BASE;
+  if (saved.jwt && jwtEl) jwtEl.value = saved.jwt;
 
   goBtn?.addEventListener("click", runHandoff);
   clearBtn?.addEventListener("click", async () => {
-    tokenEl.value = "";
-    await chrome.storage.local.remove(["handoffUrl"]);
+    if (tokenEl) tokenEl.value = "";
+    await ext.storage.local.remove(["handoffUrl"]);
     setStatus(statusEl, "Cleared.", "ok");
   });
 
@@ -207,15 +237,358 @@ document.addEventListener("DOMContentLoaded", async () => {
   copyOwnerHandoffBtn?.addEventListener("click", copyOwnerHandoff);
   openByFinalTokenBtn?.addEventListener("click", openConnectedByFinalToken);
 
+  captureJsonBtn?.addEventListener("click", captureSessionJson);
+  copySessionJsonBtn?.addEventListener("click", copySessionJson);
+  injectJsonBtn?.addEventListener("click", injectFromJson);
+
   const autosave = async () => {
-    await chrome.storage.local.set({
-      baseUrl: normalizeBaseUrl(baseUrlEl.value),
-      jwt: (jwtEl.value || "").trim(),
+    await ext.storage.local.set({
+      baseUrl: normalizeBaseUrl(baseUrlEl?.value),
+      jwt: (jwtEl?.value || "").trim(),
     });
   };
+
   baseUrlEl?.addEventListener("input", autosave);
   jwtEl?.addEventListener("input", autosave);
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// // const chrome = typeof browser !== "undefined" ? browser : chrome;
+
+// const ext = typeof browser !== "undefined" ? browser : chrome;
+
+
+
+
+// const DEFAULT_BASE = "http://127.0.0.1:8001";
+
+// // ---------- helpers ----------
+// function normalizeBaseUrl(input) {
+//   const v = (input || "").trim().replace(/\/+$/, "");
+//   return v || DEFAULT_BASE;
+// }
+
+// function normalizeToHandoffUrl(baseUrl, input) {
+//   const v = (input || "").trim();
+//   if (!v) return null;
+//   if (v.startsWith("http://") || v.startsWith("https://")) return v;
+//   return `${baseUrl}/sharing/handoff/${encodeURIComponent(v)}`;
+// }
+
+// function setStatus(el, msg, kind = "") {
+//   if (!el) return;
+//   el.textContent = msg || "";
+//   el.classList.remove("ok", "err");
+//   if (kind) el.classList.add(kind);
+// }
+
+// function setLoading(btn, spinner, goText, isLoading) {
+//   if (btn) btn.disabled = !!isLoading;
+//   if (spinner) spinner.classList.toggle("hidden", !isLoading);
+//   if (goText) goText.textContent = isLoading ? "Connecting..." : "Connect";
+// }
+
+// // ---------- DOM refs ----------
+// let baseUrlEl, tokenEl, goBtn, clearBtn, statusEl, spinner, goText;
+// let delayBetweenCookiesEl, delayAfterInjectEl, jwtEl;
+// let assistedTokenEl, assistedStartBtn;
+// let pendingListEl, refreshPendingBtn, finishBtn;
+// let ownerRequestIdEl, ownerHandoffUrlEl, generateOwnerHandoffBtn, copyOwnerHandoffBtn;
+// let finalTokenEl, openByFinalTokenBtn;
+
+// let sessionJsonEl, injectJsonBtn, captureJsonBtn, copySessionJsonBtn;
+
+
+// // ---------- existing handoff run ----------
+// async function runHandoff() {
+//   const baseUrl = normalizeBaseUrl(baseUrlEl?.value);
+//   const handoffUrl = normalizeToHandoffUrl(baseUrl, tokenEl?.value);
+//   const opts = {
+//     delayBetweenCookies: Number(delayBetweenCookiesEl?.value || 0),
+//     delayAfterInject: Number(delayAfterInjectEl?.value || 0),
+//   };
+
+//   if (!handoffUrl) return setStatus(statusEl, "Paste token/session_id or full handoff URL.", "err");
+
+//   setLoading(goBtn, spinner, goText, true);
+//   await chrome.storage.local.set({ handoffUrl, baseUrl, ...opts, jwt: (jwtEl?.value || "").trim() });
+
+//   chrome.runtime.sendMessage({ type: "RUN_HANDOFF", handoffUrl, opts }, (resp) => {
+//     setLoading(goBtn, spinner, goText, false);
+//     if (chrome.runtime.lastError) return setStatus(statusEl, chrome.runtime.lastError.message, "err");
+//     if (!resp?.ok) return setStatus(statusEl, `Failed: ${resp?.error || "unknown"}`, "err");
+//     setStatus(statusEl, "Success. Opening connected profile…", "ok");
+//     setTimeout(() => window.close(), 400);
+//   });
+// }
+
+// // ---------- owner capture helpers ----------
+// async function captureCurrentSession() {
+//   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+//   if (!tab?.id || !tab?.url) throw new Error("No active tab");
+
+//   const cookies = await chrome.cookies.getAll({ url: tab.url });
+
+//   const exec = await chrome.scripting.executeScript({
+//     target: { tabId: tab.id },
+//     func: () => {
+//       const ls = {};
+//       const ss = {};
+//       for (let i = 0; i < localStorage.length; i++) {
+//         const k = localStorage.key(i); ls[k] = localStorage.getItem(k);
+//       }
+//       for (let i = 0; i < sessionStorage.length; i++) {
+//         const k = sessionStorage.key(i); ss[k] = sessionStorage.getItem(k);
+//       }
+//       return {
+//         localStorage: JSON.stringify(ls),
+//         sessionStorage: JSON.stringify(ss),
+//         current_url: window.location.href,
+//         service_url: window.location.origin,
+//       };
+//     },
+//   });
+
+//   return { cookies, ...(exec?.[0]?.result || {}) };
+// }
+
+// async function generateOwnerHandoff() {
+//   try {
+//     const baseUrl = normalizeBaseUrl(baseUrlEl?.value);
+//     const jwt = (jwtEl?.value || "").trim();
+//     const requestId = (ownerRequestIdEl?.value || "").trim();
+
+//     if (!jwt) throw new Error("JWT required");
+//     if (!requestId) throw new Error("Request ID required");
+
+//     const capture = await captureCurrentSession();
+
+//     chrome.runtime.sendMessage(
+//       { type: "CREATE_OWNER_HANDOFF_WITH_REQUEST", baseUrl, jwt, requestId, capture },
+//       // (resp) => {
+//       //   if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message);
+//       //   if (!resp?.ok) return alert(resp?.error || "Failed");
+//       //   ownerHandoffUrlEl.value = resp.handoffUrl || "";
+//       //   setStatus(statusEl, "Owner handoff URL generated ✅", "ok");
+//       // }
+
+
+
+//       // Dans generateOwnerHandoff(), remplace seulement le callback (resp) => { ... } par:
+
+//       (resp) => {
+//         if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message);
+//         if (!resp?.ok) return alert(resp?.error || "Failed");
+
+//         // ✅ accepte camelCase et snake_case
+//         const url = (resp.handoffUrl || resp.handoff_url || "").trim();
+
+//         ownerHandoffUrlEl.value = url;
+//         if (!url) {
+//         // aide debug si le backend répond mais sans champ attendu
+//           console.warn("No handoff url in response:", resp);
+//           setStatus(statusEl, "Generated but no handoff URL returned (check console).", "err");
+//           return;
+//       }
+
+//         setStatus(statusEl, "Owner handoff URL generated ✅", "ok");
+// }
+
+
+
+
+//     );
+//   } catch (e) {
+//     alert(e.message || String(e));
+//   }
+// }
+
+// async function copyOwnerHandoff() {
+//   const txt = (ownerHandoffUrlEl?.value || "").trim();
+//   if (!txt) return alert("No handoff URL");
+//   await navigator.clipboard.writeText(txt);
+//   alert("Copied ✅");
+// }
+
+// // ---------- final token open ----------
+// async function openConnectedByFinalToken() {
+//   const baseUrl = normalizeBaseUrl(baseUrlEl?.value);
+//   const jwt = (jwtEl?.value || "").trim();
+//   const finalToken = (finalTokenEl?.value || "").trim();
+//   if (!jwt || !finalToken) return alert("JWT and final token are required");
+
+//   chrome.runtime.sendMessage(
+//     { type: "OPEN_CONNECTED_PROFILE_BY_TOKEN", baseUrl, jwt, finalToken, opts: {} },
+//     (resp) => {
+//       if (chrome.runtime.lastError) return alert(chrome.runtime.lastError.message);
+//       if (!resp?.ok) return alert(resp?.error || "Failed");
+//       alert("Connected profile opened ✅");
+//     }
+//   );
+// }
+
+
+
+
+
+
+// async function captureSessionJson() {
+//   try {
+//     const data = await captureCurrentSession();
+//     const payload = {
+//       service_url: data.service_url || data.current_url,
+//       current_url: data.current_url,
+//       cookies: data.cookies || [],
+//       localStorage: data.localStorage || "{}",
+//       sessionStorage: data.sessionStorage || "{}",
+//     };
+//     sessionJsonEl.value = JSON.stringify(payload, null, 2);
+//     setStatus(statusEl, "Session JSON captured ✅", "ok");
+//   } catch (e) {
+//     alert(e.message || String(e));
+//   }
+// }
+
+// async function copySessionJson() {
+//   const txt = (sessionJsonEl?.value || "").trim();
+//   if (!txt) return alert("No JSON to copy");
+//   await navigator.clipboard.writeText(txt);
+//   alert("JSON copied ✅");
+// }
+
+// async function injectFromJson() {
+//   try {
+//     const txt = (sessionJsonEl?.value || "").trim();
+//     if (!txt) return alert("Paste session JSON first");
+//     const session = JSON.parse(txt);
+
+//     ext.runtime.sendMessage(
+//       {
+//         type: "FORCE_INJECT_JSON_CURRENT_TAB",
+//         session,
+//         opts: { delayBetweenCookies: 60 }
+//       },
+//       (resp) => {
+//         if (ext.runtime.lastError) return alert(ext.runtime.lastError.message);
+//         if (!resp?.ok) return alert(resp?.error || "Force inject failed");
+//         alert("Force injection done ✅\nNow manually type exact URL and click reload.");
+//       }
+//     );
+//   } catch (e) {
+//     alert("Invalid JSON: " + (e.message || e));
+//   }
+// }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// // ---------- boot ----------
+// document.addEventListener("DOMContentLoaded", async () => {
+//   baseUrlEl = document.getElementById("baseUrl");
+//   tokenEl = document.getElementById("token");
+//   goBtn = document.getElementById("go");
+//   clearBtn = document.getElementById("clear");
+//   statusEl = document.getElementById("status");
+//   spinner = document.getElementById("spinner");
+//   goText = document.getElementById("goText");
+//   delayBetweenCookiesEl = document.getElementById("delayBetweenCookies");
+//   delayAfterInjectEl = document.getElementById("delayAfterInject");
+//   jwtEl = document.getElementById("jwt");
+
+//   pendingListEl = document.getElementById("pendingList");
+//   refreshPendingBtn = document.getElementById("refreshPending");
+//   finishBtn = document.getElementById("finishLogin");
+
+//   ownerRequestIdEl = document.getElementById("ownerRequestId");
+//   ownerHandoffUrlEl = document.getElementById("ownerHandoffUrl");
+//   generateOwnerHandoffBtn = document.getElementById("generateOwnerHandoff");
+//   copyOwnerHandoffBtn = document.getElementById("copyOwnerHandoff");
+
+//   finalTokenEl = document.getElementById("finalToken");
+//   openByFinalTokenBtn = document.getElementById("openByFinalToken");
+
+//   const saved = await chrome.storage.local.get(["baseUrl", "jwt", "handoffUrl"]);
+//   baseUrlEl.value = saved.baseUrl || DEFAULT_BASE;
+//   if (saved.jwt) jwtEl.value = saved.jwt;
+
+//   goBtn?.addEventListener("click", runHandoff);
+//   clearBtn?.addEventListener("click", async () => {
+//     tokenEl.value = "";
+//     await chrome.storage.local.remove(["handoffUrl"]);
+//     setStatus(statusEl, "Cleared.", "ok");
+//   });
+
+//   generateOwnerHandoffBtn?.addEventListener("click", generateOwnerHandoff);
+//   copyOwnerHandoffBtn?.addEventListener("click", copyOwnerHandoff);
+//   openByFinalTokenBtn?.addEventListener("click", openConnectedByFinalToken);
+
+//   const autosave = async () => {
+//     await chrome.storage.local.set({
+//       baseUrl: normalizeBaseUrl(baseUrlEl.value),
+//       jwt: (jwtEl.value || "").trim(),
+//     });
+//   };
+//   baseUrlEl?.addEventListener("input", autosave);
+//   jwtEl?.addEventListener("input", autosave);
+
+
+//   sessionJsonEl = document.getElementById("sessionJson");
+//   injectJsonBtn = document.getElementById("injectJsonBtn");
+//   captureJsonBtn = document.getElementById("captureJsonBtn");
+//   copySessionJsonBtn = document.getElementById("copySessionJsonBtn");
+
+//   captureJsonBtn?.addEventListener("click", captureSessionJson);
+//   copySessionJsonBtn?.addEventListener("click", copySessionJson);
+//   injectJsonBtn?.addEventListener("click", injectFromJson);
+// });
 
 
 

@@ -143,6 +143,8 @@ Check:
 ### 3) Run Streamlit dashboard
 ```bash
 export ZKP_API_URL=http://localhost:8001
+
+streamlit run frontend/dashboard.py
 streamlit run frontend/dashboard.py --server.port 8502
 
 

@@ -1,3 +1,43 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /* =====================//  * ZKP Credential Sharing - Extension Background
  * Supports:
  *  - RUN_HANDOFF: fetch /sharing/handoff/<id>, inject cookies + storages, open connected tab
@@ -73,18 +113,34 @@ function safeParseJsonObject(s) {
   try {
     const obj = JSON.parse(s);
     return obj && typeof obj === "object" ? obj : null;
-  } catch {
+  } catch (e) {
+    console.error("Failed to parse JSON:", s, e);
     return null;
   }
 }
 
+// function normalizeSameSite(v) {
+//   if (!v) return "lax";
+//   const s = String(v).toLowerCase();
+//   if (s === "strict") return "strict";
+//   if (s === "none") return "no_restriction";
+//   return "lax";
+// }
+
 function normalizeSameSite(v) {
   if (!v) return "lax";
   const s = String(v).toLowerCase();
+
   if (s === "strict") return "strict";
-  if (s === "none") return "no_restriction";
+  if (s === "none" || s === "no_restriction") return "no_restriction";
+
+  // chrome/firefox return values often seen from exported cookies
+  if (s === "unspecified" || s === "unspec" || s === "no_restriction") return "lax";
+
   return "lax";
 }
+
+
 
 function cookieSetUrlForDomain(serviceOriginUrl, cookieDomain) {
   const u = new URL(serviceOriginUrl);
@@ -142,7 +198,32 @@ async function injectCookies(serviceOriginUrl, cookies, opts = {}) {
   await sleep(delayAfterMs);
 }
 
+// async function injectStorageAndReload(tabId, localStorageObj, sessionStorageObj) {
+//   await chrome.scripting.executeScript({
+//     target: { tabId },
+//     func: (ls, ss) => {
+//       try {
+//         if (ls && typeof ls === "object") {
+//           for (const [k, v] of Object.entries(ls)) localStorage.setItem(k, v);
+//         }
+//         if (ss && typeof ss === "object") {
+//           for (const [k, v] of Object.entries(ss)) sessionStorage.setItem(k, v);
+//         }
+//       } catch (e) {
+//         console.error("Storage injection error:", e);
+//       }
+//     },
+//     args: [localStorageObj, sessionStorageObj],
+//   });
+
+//   await sleep(500);
+//   await chrome.tabs.reload(tabId);
+// }
+
+
+
 async function injectStorageAndReload(tabId, localStorageObj, sessionStorageObj) {
+  if (!localStorageObj && !sessionStorageObj) return;
   await chrome.scripting.executeScript({
     target: { tabId },
     func: (ls, ss) => {
@@ -153,16 +234,20 @@ async function injectStorageAndReload(tabId, localStorageObj, sessionStorageObj)
         if (ss && typeof ss === "object") {
           for (const [k, v] of Object.entries(ss)) sessionStorage.setItem(k, v);
         }
+        console.log("Storage injected:", { ls, ss });
       } catch (e) {
         console.error("Storage injection error:", e);
       }
     },
     args: [localStorageObj, sessionStorageObj],
   });
-
   await sleep(500);
   await chrome.tabs.reload(tabId);
 }
+
+
+
+
 
 async function fetchJson(url) {
   const r = await fetch(url, { method: "GET" });
@@ -202,51 +287,109 @@ async function apiPostJson(baseUrl, path, jwtToken, body) {
 
 
 
+
+
+
+async function injectStorageOnly(tabId, localStorageObj, sessionStorageObj) {
+  if (!localStorageObj && !sessionStorageObj) return;
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (ls, ss) => {
+      try {
+        if (ls && typeof ls === "object") {
+          for (const [k, v] of Object.entries(ls)) localStorage.setItem(k, v);
+        }
+        if (ss && typeof ss === "object") {
+          for (const [k, v] of Object.entries(ss)) sessionStorage.setItem(k, v);
+        }
+        console.log("✅ Storage injected:", { ls, ss });
+      } catch (e) {
+        console.error("Storage injection error:", e);
+      }
+    },
+    args: [localStorageObj, sessionStorageObj],
+  });
+  await sleep(300); // petit délai pour stabiliser
+}
+
+
+
+
+
+
+
+
+
+
 // async function doHandoff(handoffUrl, opts = {}) {
 //   const data = await fetchJson(handoffUrl);
 //   const serviceUrl = data.service_url;
 //   let currentUrl = data.current_url || serviceUrl;
 
-//   // Nettoyer l'URL : enlever les paramètres de requête et le fragment
+//   if (!serviceUrl) throw new Error("handoff response missing service_url");
+
+//   // Nettoyage léger URL finale (sans casser le domaine)
 //   try {
 //     const urlObj = new URL(currentUrl);
-//     // Supprimer les paramètres de requête (ex: ?action1=verify_otp)
-//     urlObj.search = '';
-//     // Supprimer le fragment (ex: #)
-//     urlObj.hash = '';
-//     // Si le chemin se termine par un mot‑clé de login/OTP, on remonte d'un niveau
-//     if (urlObj.pathname.endsWith('/verify_otp') || urlObj.pathname.includes('/auth')) {
-//       const parts = urlObj.pathname.split('/');
-//       parts.pop(); // enlève le dernier segment
-//       urlObj.pathname = parts.join('/') + '/';
+//     urlObj.search = "";
+//     urlObj.hash = "";
+//     if (urlObj.pathname.endsWith("/verify_otp") || urlObj.pathname.includes("/auth")) {
+//       const parts = urlObj.pathname.split("/");
+//       parts.pop();
+//       urlObj.pathname = parts.join("/") + "/";
 //     }
 //     currentUrl = urlObj.toString();
-//     console.log('URL nettoyée pour handoff:', currentUrl);
+//     console.log("URL nettoyée pour handoff:", currentUrl);
 //   } catch (e) {
-//     console.warn('Impossible de parser l’URL, utilisation brute', currentUrl);
+//     console.warn("Impossible de parser l’URL, utilisation brute", currentUrl);
 //   }
 
 //   const cookies = data.cookies || [];
 //   const localStorageObj = safeParseJsonObject(data.localStorage);
 //   const sessionStorageObj = safeParseJsonObject(data.sessionStorage);
 
-//   const targetHost = hostFromUrl(currentUrl);
-//   const serviceOrigin = originFromUrl(currentUrl);
+//   // ✅ FIX IMPORTANT:
+//   // Injection des cookies selon le domaine canonique serviceUrl, pas currentUrl
+//   const canonicalHost = hostFromUrl(serviceUrl);
+//   const canonicalOrigin = originFromUrl(serviceUrl);
 
+//   // 1) injecter cookies d'abord
 //   for (const c of cookies) {
-//     if (domainMatches(c.domain, targetHost)) {
-//       await setOneCookie(serviceOrigin, c);
-//       await sleep(100);
+//     if (!c.domain || domainMatches(c.domain, canonicalHost)) {
+//       try {
+//         await setOneCookie(canonicalOrigin, c);
+//       } catch (e) {
+//         console.warn("Cookie inject failed:", c?.name, c?.domain, e);
+//       }
+//       await sleep(Number(opts.delayBetweenCookies ?? 100));
 //     }
 //   }
 
-//   await sleep(1000); // délai pour laisser les cookies s’appliquer
+//   // petit délai pour stabiliser cookies
+//   await sleep(800);
 
-//   const tab = await chrome.tabs.create({ url: currentUrl, active: true });
+  
+//   // 1) ouvrir d'abord l'URL FINALE
+//   const finalUrl = currentUrl || serviceUrl;
+//   const tab = await chrome.tabs.create({ url: finalUrl, active: true });
 //   await waitForTabComplete(tab.id, 15000);
 
+//   // 2) injecter storage + cookies directement sur l'URL finale
 //   await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
 //   await waitForTabComplete(tab.id, 15000);
+
+//   // 3) injecter à nouveau les cookies au cas où certains sont HTTPOnly
+//   for (const c of cookies) {
+//     try {
+//       await setOneCookie(originFromUrl(finalUrl), c);
+//       await sleep(Number(opts.delayBetweenCookies ?? 100));
+//     } catch (e) {
+//       console.warn("Cookie re-inject failed:", c?.name, c?.domain, e);
+//   }
+  
+// }
+
+//   await sleep(Number(opts.delayAfterInject ?? 300));
 // }
 
 
@@ -256,7 +399,7 @@ async function apiPostJson(baseUrl, path, jwtToken, body) {
 
 
 
-
+// 2. doHandoff simplifié – sans rechargement automatique
 async function doHandoff(handoffUrl, opts = {}) {
   const data = await fetchJson(handoffUrl);
   const serviceUrl = data.service_url;
@@ -264,7 +407,7 @@ async function doHandoff(handoffUrl, opts = {}) {
 
   if (!serviceUrl) throw new Error("handoff response missing service_url");
 
-  // Nettoyage léger URL finale (sans casser le domaine)
+  // Nettoyage léger de l'URL (optionnel)
   try {
     const urlObj = new URL(currentUrl);
     urlObj.search = "";
@@ -277,72 +420,187 @@ async function doHandoff(handoffUrl, opts = {}) {
     currentUrl = urlObj.toString();
     console.log("URL nettoyée pour handoff:", currentUrl);
   } catch (e) {
-    console.warn("Impossible de parser l’URL, utilisation brute", currentUrl);
+    console.warn("Impossible de parser l'URL, utilisation brute", currentUrl);
   }
 
   const cookies = data.cookies || [];
   const localStorageObj = safeParseJsonObject(data.localStorage);
   const sessionStorageObj = safeParseJsonObject(data.sessionStorage);
 
-  // ✅ FIX IMPORTANT:
-  // Injection des cookies selon le domaine canonique serviceUrl, pas currentUrl
-  const canonicalHost = hostFromUrl(serviceUrl);
-  const canonicalOrigin = originFromUrl(serviceUrl);
-
-  // 1) injecter cookies d'abord
-  for (const c of cookies) {
-    if (!c.domain || domainMatches(c.domain, canonicalHost)) {
-      try {
-        await setOneCookie(canonicalOrigin, c);
-      } catch (e) {
-        console.warn("Cookie inject failed:", c?.name, c?.domain, e);
-      }
-      await sleep(Number(opts.delayBetweenCookies ?? 100));
-    }
-  }
-
-  // petit délai pour stabiliser cookies
-  await sleep(800);
-
-  // 2) ouvrir d'abord serviceUrl (même origine)
-  // const tab = await chrome.tabs.create({ url: serviceUrl, active: true });
-  // await waitForTabComplete(tab.id, 15000);
-
-  // // 3) injecter storage puis reload
-  // await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
-  // await waitForTabComplete(tab.id, 15000);
-
-  // // 4) ensuite aller à l'URL finale capturée
-  // if (currentUrl && currentUrl !== serviceUrl) {
-  //   await chrome.tabs.update(tab.id, { url: currentUrl });
-  //   await waitForTabComplete(tab.id, 15000);
-  // }
-
-  // await sleep(Number(opts.delayAfterInject ?? 300));
-
-
-  // 1) ouvrir d'abord l'URL FINALE
   const finalUrl = currentUrl || serviceUrl;
+
+  // 1. Ouvrir l'onglet sur l'URL finale
   const tab = await chrome.tabs.create({ url: finalUrl, active: true });
   await waitForTabComplete(tab.id, 15000);
 
-  // 2) injecter storage + cookies directement sur l'URL finale
-  await injectStorageAndReload(tab.id, localStorageObj, sessionStorageObj);
-  await waitForTabComplete(tab.id, 15000);
+  // 2. Injecter d'abord le localStorage/sessionStorage
+  await injectStorageOnly(tab.id, localStorageObj, sessionStorageObj);
 
-  // 3) injecter à nouveau les cookies au cas où certains sont HTTPOnly
+  // 3. Injecter les cookies (y compris HttpOnly)
+  const serviceOrigin = originFromUrl(finalUrl);
   for (const c of cookies) {
     try {
-      await setOneCookie(originFromUrl(finalUrl), c);
+      await setOneCookie(serviceOrigin, c);
       await sleep(Number(opts.delayBetweenCookies ?? 100));
     } catch (e) {
-      console.warn("Cookie re-inject failed:", c?.name, c?.domain, e);
+      console.warn("Cookie injection failed:", c?.name, e);
+    }
   }
-  
+
+  // 4. Attendre un peu pour laisser le site traiter les données
+  await sleep(1000);
+
+  // 5. Afficher une notification pour demander un rechargement manuel
+  // if (chrome.notifications?.create) {
+  //   chrome.notifications.create("reload_needed", {
+  //     type: "basic",
+  //     title: "Injection terminée",
+  //     message: "Les cookies et le stockage local ont été injectés. Rechargez la page manuellement (F5) pour appliquer la session.",
+  //     priority: 2,
+  //   });
+  // }
+
+  console.log("Handoff terminé – l'utilisateur doit recharger la page manuellement.");
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// async function doHandoffFromData(data, opts = {}) {
+//   const serviceUrl = data.service_url;
+//   const currentUrl = data.current_url || serviceUrl;
+//   if (!serviceUrl) throw new Error("Missing service_url");
+
+//   const cookies = Array.isArray(data.cookies) ? data.cookies : [];
+//   const localStorageObj =
+//     typeof data.localStorage === "string" ? JSON.parse(data.localStorage || "{}") : (data.localStorage || {});
+//   const sessionStorageObj =
+//     typeof data.sessionStorage === "string" ? JSON.parse(data.sessionStorage || "{}") : (data.sessionStorage || {});
+
+//   // 1) open service origin
+//   const tab = await chrome.tabs.create({ url: serviceUrl, active: true });
+//   await waitForTabComplete(tab.id, 20000);
+
+//   // 2) inject storages on same origin
+//   await chrome.scripting.executeScript({
+//     target: { tabId: tab.id },
+//     world: "MAIN",
+//     func: (ls, ss) => {
+//       for (const [k, v] of Object.entries(ls || {})) localStorage.setItem(k, String(v));
+//       for (const [k, v] of Object.entries(ss || {})) sessionStorage.setItem(k, String(v));
+//     },
+//     args: [localStorageObj, sessionStorageObj],
+//   });
+
+//   // 3) inject cookies
+//   for (const c of cookies) {
+//     try {
+//       await setOneCookie(originFromUrl(serviceUrl), {
+//         name: c.name,
+//         value: c.value,
+//         domain: c.domain,
+//         path: c.path || "/",
+//         secure: !!c.secure,
+//         httpOnly: !!c.httpOnly,
+//         sameSite: c.sameSite || "Lax",
+//         expires: c.expirationDate || c.expires
+//       });
+//     } catch (e) {
+//       console.warn("cookie set failed", c?.name, e);
+//     }
+//     await sleep(Number(opts.delayBetweenCookies ?? 80));
+//   }
+
+//   // 4) reload to let app read storage/cookies
+//   await chrome.tabs.reload(tab.id);
+//   await waitForTabComplete(tab.id, 20000);
+
+//   // 5) go final page
+//   if (currentUrl && currentUrl !== serviceUrl) {
+//     await chrome.tabs.update(tab.id, { url: currentUrl });
+//     await waitForTabComplete(tab.id, 20000);
+//   }
+// }
+
+
+
+
+
+async function doHandoffFromData(data, opts = {}) {
+  const serviceUrl = data.service_url;
+  const currentUrl = data.current_url || serviceUrl;
+  if (!serviceUrl) throw new Error("Missing service_url");
+
+  const cookies = Array.isArray(data.cookies) ? data.cookies : [];
+  const ls =
+    typeof data.localStorage === "string"
+      ? JSON.parse(data.localStorage || "{}")
+      : (data.localStorage || {});
+  const ss =
+    typeof data.sessionStorage === "string"
+      ? JSON.parse(data.sessionStorage || "{}")
+      : (data.sessionStorage || {});
+
+  // 1) open service origin first
+  const tab = await ext.tabs.create({ url: serviceUrl, active: true });
+  await waitForTabComplete(tab.id, 30000);
+
+  // 2) inject storage first
+  await injectStorage(tab.id, ls, ss);
+
+  // 3) inject cookies on service origin
+  const serviceOrigin = originFromUrl(serviceUrl);
+  for (const c of cookies) {
+    try {
+      await setOneCookie(serviceOrigin, {
+        ...c,
+        expires: c.expires ?? c.expirationDate
+      });
+    } catch (e) {
+      console.warn("cookie set failed:", c?.name, e);
+    }
+    await sleep(Number(opts.delayBetweenCookies ?? 120));
+  }
+
+  // IMPORTANT: no reload here (SSO sites may clear session on reload)
+  await sleep(250);
+
+  // 4) navigate directly to captured connected page
+  if (currentUrl && currentUrl !== serviceUrl) {
+    await ext.tabs.update(tab.id, { url: currentUrl });
+    await waitForTabComplete(tab.id, 30000);
+  }
+
+  // 5) re-apply cookies once on final origin (stabilization)
+  const finalOrigin = originFromUrl(currentUrl || serviceUrl);
+  for (const c of cookies) {
+    try {
+      await setOneCookie(finalOrigin, {
+        ...c,
+        expires: c.expires ?? c.expirationDate
+      });
+    } catch (e) {
+      console.warn("cookie re-set failed:", c?.name, e);
+    }
+    await sleep(80);
+  }
+
+  // 6) inject storage again (some SPAs clear it on first boot)
+  await injectStorage(tab.id, ls, ss);
 
   await sleep(Number(opts.delayAfterInject ?? 300));
 }
+
 
 
 
@@ -946,6 +1204,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 }
 
 
+  if (msg?.type === "FORCE_INJECT_JSON_CURRENT_TAB") {
+  (async () => {
+    try {
+      const [tab] = await ext.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) throw new Error("No active tab");
+      const r = await forceInjectCurrentTabFromData(tab.id, msg.session, msg.opts || {});
+      sendResponse({ ok: true, data: r });
+    } catch (e) {
+      sendResponse({ ok: false, error: String(e?.message || e) });
+    }
+  })();
+  return true;
+}
+
 
 
 
@@ -1040,6 +1312,78 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
 
 
 
+
+
+
+
+async function forceInjectCurrentTabFromData(tabId, data, opts = {}) {
+  if (!tabId) throw new Error("Missing tabId");
+  if (!data || typeof data !== "object") throw new Error("Missing session data");
+
+  const serviceUrl = data.service_url;
+  if (!serviceUrl) throw new Error("Missing service_url in JSON");
+
+  const cookies = Array.isArray(data.cookies) ? data.cookies : [];
+  const localStorageObj =
+    typeof data.localStorage === "string" ? JSON.parse(data.localStorage || "{}") : (data.localStorage || {});
+  const sessionStorageObj =
+    typeof data.sessionStorage === "string" ? JSON.parse(data.sessionStorage || "{}") : (data.sessionStorage || {});
+
+  const activeTab = await ext.tabs.get(tabId);
+  const activeOrigin = new URL(activeTab.url).origin;
+  const serviceOrigin = new URL(serviceUrl).origin;
+
+  // Important: same origin as manual workflow
+  if (activeOrigin !== serviceOrigin) {
+    throw new Error(`Open exactly this origin first: ${serviceOrigin}`);
+  }
+
+  // 1) inject storage in current tab (no reload)
+  await ext.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: (ls, ss) => {
+      for (const [k, v] of Object.entries(ls || {})) localStorage.setItem(k, String(v));
+      for (const [k, v] of Object.entries(ss || {})) sessionStorage.setItem(k, String(v));
+      return {
+        lsCount: localStorage.length,
+        ssCount: sessionStorage.length,
+        href: location.href
+      };
+    },
+    args: [localStorageObj, sessionStorageObj],
+  });
+
+  // 2) inject cookies (2 passes like manual robustness)
+  const delay = Number(opts.delayBetweenCookies ?? 80);
+  for (let pass = 0; pass < 2; pass++) {
+    for (const c of cookies) {
+      try {
+        await setOneCookie(serviceOrigin + "/", {
+          ...c,
+          expires: c.expires ?? c.expirationDate
+        });
+      } catch (e1) {
+        // fallback: retry without domain
+        try {
+          const c2 = { ...c };
+          delete c2.domain;
+          await setOneCookie(serviceOrigin + "/", c2);
+        } catch (e2) {
+          console.warn("[FORCE] cookie failed:", c?.name, e2);
+        }
+      }
+      await sleep(delay);
+    }
+  }
+
+  // 3) verify readback
+  const injectedNow = await ext.cookies.getAll({ url: serviceOrigin + "/" });
+  console.log("[FORCE] cookies now:", injectedNow.map(c => c.name));
+
+  // No reload, no navigation => exactly like your manual sequence
+  return { ok: true, cookieCount: injectedNow.length };
+}
 
 
 

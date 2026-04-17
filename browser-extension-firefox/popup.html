@@ -209,6 +209,34 @@
 
 
 
+          <div style="margin-top:12px; border-top:1px solid #ddd; padding-top:10px;">
+            <label for="sessionJson">Session JSON (cookies + localStorage + sessionStorage)</label>
+            <textarea
+              id="sessionJson"
+              rows="8"
+              placeholder='{"service_url":"https://www.mobile-id.tn","current_url":"https://www.mobile-id.tn/mySpace/mobile-id/info-mobile-id","cookies":[...],"localStorage":"{}","sessionStorage":"{}"}'
+            ></textarea>
+
+            <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+              <button id="captureJsonBtn">Capture current tab JSON</button>
+              <button id="copySessionJsonBtn">Copy JSON</button>
+              <button id="injectJsonBtn">Force inject JSON (manual URL + reload)</button>
+            </div>
+          </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
           <div id="status" class="status" aria-live="polite"></div>
 
