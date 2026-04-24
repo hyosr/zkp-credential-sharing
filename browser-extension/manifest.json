@@ -4,6 +4,8 @@
   "version": "1.2.0",
   "permissions": ["cookies", "tabs", "storage", "scripting", "webNavigation", "notifications", "alarms"],
   "host_permissions": [
+    "http://localhost:8001/*", 
+    "https://recolyse.com/*",
     "https://localhost:8001/*",
     "https://127.0.0.1:8001/*",
 

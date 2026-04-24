@@ -340,11 +340,16 @@ async def login_and_get_cookies(
         domain = _domain_from_url(service_url)
 
         async with async_playwright() as p:
-            # Always visible
-            browser = await p.chromium.launch(
-                headless=False,
-                args=["--disable-dev-shm-usage", "--no-sandbox"],
-            )
+            # Always visible playwright browser for better reliability (some sites detect headless and hide login fields, plus we want to see what's going on)  
+            # browser = await p.chromium.launch(
+            #     headless=False,
+            #     args=["--disable-dev-shm-usage", "--no-sandbox"],
+            # )
+
+            browser = await p.chromium.launch(headless=True, args=["--disable-dev-shm-usage", "--no-sandbox"])
+
+
+
             context = await browser.new_context()
             page = await context.new_page()
             page.set_default_timeout(DEFAULT_TIMEOUT_MS)

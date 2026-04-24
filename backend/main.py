@@ -83,15 +83,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Prevent MIME type sniffing
         response.headers["X-Content-Type-Options"] = "nosniff"
         
-        # Prevent clickjacking (optional but recommended)
+        # Prevent clickjacking 
         response.headers["X-Frame-Options"] = "DENY"
         
-        # Enable browser XSS filtering (deprecated but harmless)
+        # Enable browser XSS filtering 
         response.headers["X-XSS-Protection"] = "1; mode=block"
 
         # Strict Transport Security (only for HTTPS )
-        if request.url.scheme == "https":
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        # if request.url.scheme == "https":
+        #     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
         # Add Cache-Control header for all responses
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"

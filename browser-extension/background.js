@@ -1005,34 +1005,80 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 
 /* ---------- Optional: Bridge URL support (handoff injection) ---------- */
+// function isBridgeUrl(url) {
+//   try {
+//     const u = new URL(url);
+//     return (
+//       u.origin === "https://localhost:8001" &&
+//       u.pathname === "/extension/connect" &&
+//       u.searchParams.get("handoff")
+//     );
+//   } catch {
+//     return false;
+//   }
+// }
+
+
+
 function isBridgeUrl(url) {
   try {
     const u = new URL(url);
-    return (
-      u.origin === "https://localhost:8001" &&
-      u.pathname === "/extension/connect" &&
-      u.searchParams.get("handoff")
-    );
+    // Match any URL that has pathname exactly "/extension/connect" and has a "handoff" parameter
+    return u.pathname === "/extension/connect" && u.searchParams.has("handoff");
   } catch {
     return false;
   }
 }
 
+
+
+
+
+
+// chrome.webNavigation.onCommitted.addListener(async (details) => {
+//   if (details.frameId !== 0) return;
+//   if (!isBridgeUrl(details.url)) return;
+
+//   const u = new URL(details.url);
+//   const handoffUrl = u.searchParams.get("handoff");
+
+//   try {
+//     await chrome.storage.local.set({ handoffUrl });
+//     await doHandoff(handoffUrl, {});
+//     chrome.tabs.remove(details.tabId);
+//   } catch (e) {
+//     console.error("Bridge handoff failed:", e);
+//   }
+// });
+
+
+
+
+
 chrome.webNavigation.onCommitted.addListener(async (details) => {
-  if (details.frameId !== 0) return;
+  if (details.frameId !== 0) return; // only main frame
   if (!isBridgeUrl(details.url)) return;
 
-  const u = new URL(details.url);
-  const handoffUrl = u.searchParams.get("handoff");
+  const url = new URL(details.url);
+  const handoffUrl = url.searchParams.get("handoff");
+  if (!handoffUrl) return;
 
+  // Remove the bridge tab immediately (optional, but prevents showing the "Not Found" page)
+  chrome.tabs.remove(details.tabId, () => {
+    if (chrome.runtime.lastError) console.warn("Could not remove tab:", chrome.runtime.lastError);
+  });
+
+  // Execute handoff injection
   try {
-    await chrome.storage.local.set({ handoffUrl });
     await doHandoff(handoffUrl, {});
-    chrome.tabs.remove(details.tabId);
+    console.log("Handoff successful via bridge URL");
   } catch (e) {
-    console.error("Bridge handoff failed:", e);
+    console.error("Handoff failed:", e);
   }
 });
+
+
+
 
 
 
