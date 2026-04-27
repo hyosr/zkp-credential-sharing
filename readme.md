@@ -145,7 +145,7 @@ Check:
 export ZKP_API_URL=http://localhost:8001
 
 streamlit run frontend/dashboard.py
-streamlit run frontend/dashboard.py --server.port 8502
+streamlit run frontend/dashboard.py --server.port 8502 
 
 
 streamlit run frontend/dashboard.py \  --server.sslCertFile=cert.pem \

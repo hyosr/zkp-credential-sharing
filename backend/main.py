@@ -44,6 +44,8 @@ from backend.routers.final_capture_share import router as final_capture_share_ro
 
 from backend.routers.owner_handoff import router as owner_handoff_router
 
+from fastapi.middleware.cors import CORSMiddleware
+
 
 
 
@@ -109,7 +111,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8502", "http://localhost:3000", "chrome-extension://*","http://localhost:8501", "http://127.0.0.1:8501", ],
+    allow_origins=["http://localhost:8502", "http://localhost:3000", "http://localhost:3001", "chrome-extension://*","http://localhost:8501", "http://127.0.0.1:8501", ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
