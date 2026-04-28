@@ -394,11 +394,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 
 
-
-
-
-
-
 // /* =====================//  * ZKP Credential Sharing - Extension Background
 //  * Supports:
 //  *  - RUN_HANDOFF: fetch /sharing/handoff/<id>, inject cookies + storages, open connected tab
