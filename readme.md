@@ -154,6 +154,8 @@ streamlit run frontend/dashboard.py \  --server.sslCertFile=cert.pem \
 
 
 
+playwright install
+
   
 ```
 

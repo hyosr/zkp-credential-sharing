@@ -1,201 +1,268 @@
-/* =====================
- * ZKP Credential Sharing - Extension Background (fixed)
- * ========================= */
+/* =====================================================================
+ * ZKP Credential Sharing — background.js
+ * Fix: cookies injected BEFORE navigation → site sees session on first load
+ * ===================================================================== */
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
-function originFromUrl(u) { try { const x = new URL(u); return `${x.protocol}//${x.host}/`; } catch { return u; } }
-function hostFromUrl(u) { try { return new URL(u).hostname.toLowerCase(); } catch { return ""; } }
+
+function originFromUrl(u) {
+  try { const x = new URL(u); return `${x.protocol}//${x.host}/`; } catch { return u; }
+}
+function hostFromUrl(u) {
+  try { return new URL(u).hostname.toLowerCase(); } catch { return ""; }
+}
 function normalizeDomain(d) { return (d || "").toLowerCase().replace(/^\./, ""); }
-function domainMatches(cookieDomain, targetHost) {
-  const cd = normalizeDomain(cookieDomain), h = normalizeDomain(targetHost);
-  return cd === h || h.endsWith("." + cd) || cd.endsWith("." + h);
-}
-function waitForTabComplete(tabId, timeoutMs = 15000) {
-  return new Promise((resolve) => {
-    function done() { chrome.tabs.onUpdated.removeListener(onUpdated); resolve(); }
-    function onUpdated(id, info) { if (id === tabId && info.status === "complete") done(); }
-    chrome.tabs.onUpdated.addListener(onUpdated);
-    setTimeout(done, timeoutMs);
-  });
-}
-function safeParseJsonObject(s) {
-  if (!s) return null;
-  try { const o = JSON.parse(s); return o && typeof o === "object" ? o : null; } catch { return null; }
+function domainMatches(cd, host) {
+  cd = normalizeDomain(cd); host = normalizeDomain(host);
+  return cd === host || host.endsWith("." + cd) || cd.endsWith("." + host);
 }
 function normalizeSameSite(v) {
-  if (!v) return "lax";
-  const s = String(v).toLowerCase();
+  const s = String(v || "").toLowerCase();
   if (s === "strict") return "strict";
-  if (s === "none") return "no_restriction";
+  if (s === "none")   return "no_restriction";
   return "lax";
 }
-
-async function setOneCookie(serviceOriginUrl, c, forcedDomain = null) {
-  const domain = forcedDomain || c.domain;
-  const details = {
-    url: serviceOriginUrl, name: c.name, value: c.value,
-    path: c.path || "/", httpOnly: !!c.httpOnly, secure: !!c.secure,
-    sameSite: normalizeSameSite(c.sameSite),
-  };
-  if (domain) details.domain = domain;
-  if (typeof c.expires === "number" && c.expires > 0) details.expirationDate = c.expires;
-  try { return await chrome.cookies.set(details); } catch (e) { console.warn("cookie set failed:", c?.name, e?.message); }
+function safeParseJson(s) {
+  if (!s) return null;
+  if (typeof s === "object") return s;
+  try { const o = JSON.parse(s); return typeof o === "object" ? o : null; } catch { return null; }
+}
+function waitForTabComplete(tabId, ms = 15000) {
+  return new Promise((res) => {
+    function done() { chrome.tabs.onUpdated.removeListener(cb); res(); }
+    function cb(id, info) { if (id === tabId && info.status === "complete") done(); }
+    chrome.tabs.onUpdated.addListener(cb);
+    setTimeout(done, ms);
+  });
 }
 
-async function injectStorageAndReload(tabId, localStorageObj, sessionStorageObj) {
-  if (!localStorageObj && !sessionStorageObj) return;
+/* ─── Cookie helpers ─────────────────────────────────────────────────── */
+async function setCookie(originUrl, c, forceDomain) {
+  const domain = forceDomain ?? c.domain;
+  const d = {
+    url:      originUrl,
+    name:     c.name,
+    value:    String(c.value ?? ""),
+    path:     c.path || "/",
+    httpOnly: !!c.httpOnly,
+    secure:   !!c.secure,
+    sameSite: normalizeSameSite(c.sameSite),
+  };
+  if (domain) d.domain = domain;
+  if (typeof c.expires === "number" && c.expires > 0) d.expirationDate = c.expires;
+  try { await chrome.cookies.set(d); }
+  catch (e) { console.warn("[cookie]", c?.name, c?.domain, e?.message); }
+}
+
+async function injectCookies(cookies, serviceUrl) {
+  if (!cookies?.length) return;
+  const origin = originFromUrl(serviceUrl);
+  const host   = hostFromUrl(serviceUrl);
+  for (const c of cookies) {
+    // Set with original domain
+    if (!c.domain || domainMatches(c.domain, host)) {
+      await setCookie(origin, c);
+    }
+    // Also set with leading dot for subdomain coverage (e.g. .facebook.com)
+    if (c.domain && !c.domain.startsWith(".")) {
+      await setCookie(origin, c, "." + c.domain);
+    }
+    await sleep(50);
+  }
+  console.log(`[cookies] injected ${cookies.length} for ${host}`);
+}
+
+/* ─── Storage injection (runs inside the page) ───────────────────────── */
+async function injectStorage(tabId, ls, ss) {
+  if (!ls && !ss) return;
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
       func: (ls, ss) => {
-        try {
-          if (ls) for (const [k, v] of Object.entries(ls)) localStorage.setItem(k, v);
-          if (ss) for (const [k, v] of Object.entries(ss)) sessionStorage.setItem(k, v);
-        } catch (e) { console.error("Storage injection error:", e); }
+        if (ls) for (const [k, v] of Object.entries(ls)) { try { localStorage.setItem(k, v); } catch {} }
+        if (ss) for (const [k, v] of Object.entries(ss)) { try { sessionStorage.setItem(k, v); } catch {} }
+        console.log("[zkp] storage injected ✓");
       },
-      args: [localStorageObj, sessionStorageObj],
+      args: [ls, ss],
     });
-    await sleep(300);
-    await chrome.tabs.reload(tabId);
-  } catch (e) { console.warn("injectStorageAndReload failed:", e?.message); }
+  } catch (e) { console.warn("[storage]", e?.message); }
 }
 
-/* ─── CORE doHandoff ─────────────────────────────────────────────────────── */
+/* ─── Resolve the best URL to navigate to ───────────────────────────── */
+function resolveFinalUrl(serviceUrl, currentUrl) {
+  // If Playwright stopped on a login / 2FA / checkpoint page → go to root
+  const loginRe = /\/(login|signin|sign-in|auth|accounts\/login|flow\/login|verify|checkpoint|challenge)/i;
+  const googleRe = /accounts\.google\.com/i;
+  let url = currentUrl || serviceUrl;
+  try {
+    const u = new URL(url);
+    if (loginRe.test(u.pathname) || googleRe.test(u.hostname)) {
+      // Go to site root instead
+      url = `${new URL(serviceUrl).origin}/`;
+      console.log("[url] login page detected → using root:", url);
+    } else {
+      // Strip query & hash noise
+      u.search = "";
+      u.hash = "";
+      url = u.toString();
+    }
+  } catch { url = serviceUrl; }
+  return url;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * CORE: doHandoff
+ *
+ * CORRECT ORDER:
+ *   1. Fetch session data from backend
+ *   2. Inject ALL cookies (before any tab opens — chrome.cookies is global)
+ *   3. Open about:blank tab
+ *   4. Navigate to final URL  ← site loads WITH cookies already set
+ *   5. Wait for page load
+ *   6. Inject localStorage / sessionStorage
+ *   7. Reload once so the app reads storage
+ *   8. Re-inject cookies (catches any that were overwritten by the site)
+ * ═══════════════════════════════════════════════════════════════════════ */
 async function doHandoff(handoffUrl, opts = {}) {
-  console.log("[doHandoff] fetching:", handoffUrl);
+  console.log("[doHandoff] →", handoffUrl);
 
+  // 1. Fetch
   let data;
-  // Try http first, fallback to https if it fails (handles localhost with SSL)
   const tryFetch = async (url) => {
-    const res = await fetch(url, { method: "GET" });
-    if (!res.ok) { const b = await res.text().catch(() => ""); throw new Error(`HTTP ${res.status}: ${b}`); }
-    return res.json();
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text().catch(() => "")}`);
+    return r.json();
   };
-
   try {
     data = await tryFetch(handoffUrl);
   } catch (e) {
     const alt = handoffUrl.startsWith("http://")
       ? handoffUrl.replace("http://", "https://")
       : handoffUrl.replace("https://", "http://");
-    console.warn("[doHandoff] primary fetch failed, trying:", alt, "-", e?.message);
+    console.warn("[doHandoff] retry with", alt);
     data = await tryFetch(alt);
   }
 
   const serviceUrl = data.service_url;
-  if (!serviceUrl) throw new Error("handoff response missing service_url");
+  if (!serviceUrl) throw new Error("handoff: missing service_url");
 
-  // Determine final URL to open (clean login paths)
-  let finalUrl = data.current_url || serviceUrl;
-  try {
-    const u = new URL(finalUrl);
-    u.search = ""; u.hash = "";
-    if (/\/(login|signin|auth|verify_otp|accounts)/i.test(u.pathname)) {
-      finalUrl = `${u.protocol}//${u.host}/`;
-    } else {
-      finalUrl = u.toString();
-    }
-  } catch { finalUrl = serviceUrl; }
-  console.log("[doHandoff] opening:", finalUrl);
+  const cookies  = data.cookies || [];
+  const lsObj    = safeParseJson(data.localStorage);
+  const ssObj    = safeParseJson(data.sessionStorage);
+  const finalUrl = resolveFinalUrl(serviceUrl, data.current_url);
 
-  const cookies = data.cookies || [];
-  const lsObj = safeParseJsonObject(data.localStorage);
-  const ssObj = safeParseJsonObject(data.sessionStorage);
-  const canonicalOrigin = originFromUrl(serviceUrl);
-  const canonicalHost = hostFromUrl(serviceUrl);
+  console.log("[doHandoff] service:", serviceUrl);
+  console.log("[doHandoff] final url:", finalUrl);
+  console.log("[doHandoff] cookies:", cookies.length, "| ls:", lsObj ? Object.keys(lsObj).length : 0);
 
-  // 1. Inject cookies before opening tab
-  for (const c of cookies) {
-    if (!c.domain || domainMatches(c.domain, canonicalHost)) {
-      await setOneCookie(canonicalOrigin, c);
-      await sleep(80);
-    }
-  }
-  await sleep(500);
+  // 2. Inject cookies BEFORE opening any tab
+  await injectCookies(cookies, serviceUrl);
+  await sleep(500); // give chrome time to commit cookies
 
-  // 2. Open tab
-  const tab = await chrome.tabs.create({ url: finalUrl, active: true });
+  // 3. Open blank tab
+  const tab = await chrome.tabs.create({ url: "about:blank", active: true });
+  await sleep(150);
+
+  // 4. Navigate to final URL — cookies are already set, site loads authenticated
+  await chrome.tabs.update(tab.id, { url: finalUrl });
   await waitForTabComplete(tab.id, 15000);
 
-  // 3. Inject storage + reload
-  await injectStorageAndReload(tab.id, lsObj, ssObj);
-  await waitForTabComplete(tab.id, 10000);
+  // 5+6. Inject storage
+  await injectStorage(tab.id, lsObj, ssObj);
+  await sleep(300);
 
-  // 4. Re-inject cookies after reload (catches httpOnly)
-  for (const c of cookies) {
-    await setOneCookie(originFromUrl(finalUrl), c);
-    await sleep(60);
+  // 7. Reload so SPA picks up localStorage (e.g. JWT token stored there)
+  if (lsObj && Object.keys(lsObj).length > 0) {
+    await chrome.tabs.reload(tab.id);
+    await waitForTabComplete(tab.id, 10000);
   }
-  console.log("[doHandoff] done");
+
+  // 8. Re-inject cookies post-reload (some sites clear/replace cookies on load)
+  await injectCookies(cookies, serviceUrl);
+
+  console.log("[doHandoff] done ✅");
 }
 
+/* ─── doHandoffFromData (paste-JSON flow) ────────────────────────────── */
 async function doHandoffFromData(data, opts = {}) {
   const serviceUrl = data.service_url || data.current_url;
-  const currentUrl = data.current_url || serviceUrl;
-  if (!serviceUrl) throw new Error("session JSON missing service_url");
-  const cookies = data.cookies || [];
-  const lsObj = typeof data.localStorage === "string" ? safeParseJsonObject(data.localStorage) : (data.localStorage || null);
-  const ssObj = typeof data.sessionStorage === "string" ? safeParseJsonObject(data.sessionStorage) : (data.sessionStorage || null);
-  const canonicalOrigin = originFromUrl(serviceUrl);
-  for (const c of cookies) { try { await setOneCookie(canonicalOrigin, c); } catch {} await sleep(80); }
+  if (!serviceUrl) throw new Error("missing service_url");
+  const finalUrl = resolveFinalUrl(serviceUrl, data.current_url);
+  const cookies  = data.cookies || [];
+  const lsObj    = safeParseJson(data.localStorage);
+  const ssObj    = safeParseJson(data.sessionStorage);
+
+  await injectCookies(cookies, serviceUrl);
   await sleep(500);
-  const tab = await chrome.tabs.create({ url: currentUrl, active: true });
+  const tab = await chrome.tabs.create({ url: "about:blank", active: true });
+  await sleep(150);
+  await chrome.tabs.update(tab.id, { url: finalUrl });
   await waitForTabComplete(tab.id, 15000);
-  await injectStorageAndReload(tab.id, lsObj, ssObj);
-  await waitForTabComplete(tab.id, 10000);
+  await injectStorage(tab.id, lsObj, ssObj);
+  await sleep(300);
+  if (lsObj && Object.keys(lsObj).length > 0) {
+    await chrome.tabs.reload(tab.id);
+    await waitForTabComplete(tab.id, 10000);
+  }
+  await injectCookies(cookies, serviceUrl);
 }
 
-/* ─── API helpers ────────────────────────────────────────────────────────── */
-async function apiGetJson(baseUrl, path, jwt) {
-  const r = await fetch(`${baseUrl}${path}`, { headers: { Authorization: `Bearer ${jwt}` } });
-  if (!r.ok) throw new Error(`GET ${path} failed: ${r.status} ${await r.text()}`);
+/* ─── API helpers ────────────────────────────────────────────────────── */
+async function apiGet(base, path, jwt) {
+  const r = await fetch(`${base}${path}`, { headers: { Authorization: `Bearer ${jwt}` } });
+  if (!r.ok) throw new Error(`GET ${path} → ${r.status}`);
   return r.json();
 }
-async function apiPostJson(baseUrl, path, jwt, body) {
-  const r = await fetch(`${baseUrl}${path}`, {
-    method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+async function apiPost(base, path, jwt, body) {
+  const r = await fetch(`${base}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
     body: JSON.stringify(body || {}),
   });
-  if (!r.ok) throw new Error(`POST ${path} failed: ${r.status} ${await r.text()}`);
+  if (!r.ok) throw new Error(`POST ${path} → ${r.status}: ${await r.text()}`);
   return r.json();
 }
 
-/* ─── Assisted flow ──────────────────────────────────────────────────────── */
+/* ─── Assisted flow ──────────────────────────────────────────────────── */
 let assistedPollTimer = null;
-async function assistedStartFlow(baseUrl, jwtToken, shareToken) {
-  const created = await apiPostJson(baseUrl, "/sharing/assisted/request", jwtToken, { share_token: shareToken });
-  const requestId = created.request_id;
-  await chrome.storage.local.set({ assistedRequestId: requestId });
+async function assistedStartFlow(baseUrl, jwt, shareToken) {
+  const { request_id } = await apiPost(baseUrl, "/sharing/assisted/request", jwt, { share_token: shareToken });
+  await chrome.storage.local.set({ assistedRequestId: request_id });
   if (assistedPollTimer) clearInterval(assistedPollTimer);
   assistedPollTimer = setInterval(async () => {
     try {
-      const st = await apiGetJson(baseUrl, `/sharing/assisted/${encodeURIComponent(requestId)}/status`, jwtToken);
+      const st = await apiGet(baseUrl, `/sharing/assisted/${encodeURIComponent(request_id)}/status`, jwt);
       if (st.status === "completed" && st.handoff_url) {
         clearInterval(assistedPollTimer); assistedPollTimer = null;
-        await doHandoff(`${baseUrl}${st.handoff_url}`, {});
-        if (chrome.notifications?.create)
-          chrome.notifications.create({ type: "basic", iconUrl: "icon32.png", title: "Assisted Share Complete", message: "Connected profile opened." });
+        await doHandoff(`${baseUrl}${st.handoff_url}`);
+        try { chrome.notifications.create({ type:"basic", iconUrl:"icon32.png", title:"Session ready", message:"Connected profile opened." }); } catch {}
       }
-    } catch (err) { console.error("Assisted poll error:", err); }
+    } catch (e) { console.error("[assisted poll]", e?.message); }
   }, 2000);
+  return { requestId: request_id };
 }
 
-/* ─── Owner polling ──────────────────────────────────────────────────────── */
+/* ─── Owner polling ──────────────────────────────────────────────────── */
 let ownerPollTimer = null;
 const seenPending = new Set();
-async function ownerStartPolling(baseUrl, jwtToken) {
+async function ownerStartPolling(baseUrl, jwt) {
   if (ownerPollTimer) return;
   ownerPollTimer = setInterval(async () => {
     try {
-      const pending = await apiGetJson(baseUrl, "/sharing/assisted/pending", jwtToken);
-      for (const item of pending) {
+      const list = await apiGet(baseUrl, "/sharing/assisted/pending", jwt);
+      for (const item of list) {
         if (seenPending.has(item.request_id)) continue;
         seenPending.add(item.request_id);
-        if (chrome.notifications?.create)
-          chrome.notifications.create(`assist:${item.request_id}`, { type: "basic", iconUrl: "icon32.png", title: "Assisted login request", message: `Access request for: ${item.service_url}`, priority: 2 });
+        try {
+          chrome.notifications.create(`assist:${item.request_id}`, {
+            type:"basic", iconUrl:"icon32.png",
+            title:"Assisted login request",
+            message:`Access request for: ${item.service_url}`, priority:2,
+          });
+        } catch {}
       }
     } catch (e) {
-      if (String(e?.message || e).includes("401")) { clearInterval(ownerPollTimer); ownerPollTimer = null; }
+      if (String(e?.message).includes("401")) { clearInterval(ownerPollTimer); ownerPollTimer = null; }
     }
   }, 5000);
 }
@@ -203,49 +270,50 @@ async function ownerStartPolling(baseUrl, jwtToken) {
 if (chrome.notifications?.onClicked) {
   chrome.notifications.onClicked.addListener(async (notifId) => {
     if (!notifId.startsWith("assist:")) return;
-    const requestId = notifId.slice("assist:".length);
-    const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
+    const reqId = notifId.slice("assist:".length);
+    const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl","jwt"]);
     if (!baseUrl || !jwt) return;
     try {
-      const resp = await apiPostJson(baseUrl, `/sharing/assisted/${encodeURIComponent(requestId)}/approve`, jwt, {});
+      const resp = await apiPost(baseUrl, `/sharing/assisted/${encodeURIComponent(reqId)}/approve`, jwt, {});
       if (!resp.assist_login_url) throw new Error("missing assist_login_url");
       await chrome.tabs.create({ url: resp.assist_login_url, active: true });
-      await chrome.storage.local.set({ pendingCaptureRequestId: requestId });
+      await chrome.storage.local.set({ pendingCaptureRequestId: reqId });
       chrome.action.setBadgeText({ text: "!" });
-    } catch (e) { console.error("approve failed:", e); }
+    } catch (e) { console.error("[approve]", e); }
   });
 }
 
-/* ─── Session capture ────────────────────────────────────────────────────── */
+/* ─── Session capture (owner side) ──────────────────────────────────── */
 async function captureCurrentSession(tabId, serviceUrl, requestId) {
-  const cookies = await chrome.cookies.getAll({ url: serviceUrl });
-  const validatedCookies = cookies.map((c) => ({
-    name: c.name, value: c.value, domain: c.domain || new URL(serviceUrl).hostname,
+  const rawCookies = await chrome.cookies.getAll({ url: serviceUrl });
+  const cookies = rawCookies.map((c) => ({
+    name: c.name, value: c.value,
+    domain: c.domain || new URL(serviceUrl).hostname,
     path: c.path || "/", expires: c.expirationDate || -1,
-    httpOnly: c.httpOnly || false, secure: c.secure || false, sameSite: c.sameSite || "Lax",
+    httpOnly: !!c.httpOnly, secure: !!c.secure, sameSite: c.sameSite || "Lax",
   }));
-  const exec = await chrome.scripting.executeScript({
+  const [exec] = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
       const ls = {}, ss = {};
-      for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); ls[k] = localStorage.getItem(k); }
-      for (let i = 0; i < sessionStorage.length; i++) { const k = sessionStorage.key(i); ss[k] = sessionStorage.getItem(k); }
-      return { localStorage: ls, sessionStorage: ss };
+      for (let i=0;i<localStorage.length;i++){const k=localStorage.key(i);ls[k]=localStorage.getItem(k);}
+      for (let i=0;i<sessionStorage.length;i++){const k=sessionStorage.key(i);ss[k]=sessionStorage.getItem(k);}
+      return { ls, ss, url: location.href };
     }
   });
-  const { localStorage: ls, sessionStorage: ss } = exec[0].result;
-  const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
+  const { ls, ss, url } = exec.result;
+  const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl","jwt"]);
   if (!jwt) throw new Error("No JWT");
   const r = await fetch(`${baseUrl}/sharing/assisted/${requestId}/session`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-    body: JSON.stringify({ cookies: validatedCookies, localStorage: JSON.stringify(ls), sessionStorage: JSON.stringify(ss), current_url: serviceUrl }),
+    headers: { "Content-Type":"application/json", Authorization:`Bearer ${jwt}` },
+    body: JSON.stringify({ cookies, localStorage:JSON.stringify(ls), sessionStorage:JSON.stringify(ss), current_url:url }),
   });
   if (!r.ok) throw new Error(`Submit session HTTP ${r.status}`);
   return r.json();
 }
 
-/* ─── Bridge URL intercept ───────────────────────────────────────────────── */
+/* ─── Bridge URL intercept ───────────────────────────────────────────── */
 function isBridgeUrl(url) {
   try { const u = new URL(url); return u.pathname === "/extension/connect" && u.searchParams.has("handoff"); }
   catch { return false; }
@@ -254,15 +322,15 @@ chrome.webNavigation.onCommitted.addListener(async (details) => {
   if (details.frameId !== 0 || !isBridgeUrl(details.url)) return;
   const handoffUrl = new URL(details.url).searchParams.get("handoff");
   if (!handoffUrl) return;
-  chrome.tabs.remove(details.tabId, () => { if (chrome.runtime.lastError) {} });
-  try { await doHandoff(handoffUrl, {}); console.log("[bridge] success"); }
-  catch (e) { console.error("[bridge] failed:", e); }
+  chrome.tabs.remove(details.tabId, () => {});
+  try { await doHandoff(handoffUrl); console.log("[bridge] ✓"); }
+  catch (e) { console.error("[bridge]", e); }
 });
 
-/* ─── Message router ─────────────────────────────────────────────────────── */
+/* ─── Message router ─────────────────────────────────────────────────── */
 console.log("[BG] loaded");
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  console.log("[BG] message:", msg?.type);
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  console.log("[BG]", msg?.type);
 
   if (msg?.type === "RUN_HANDOFF") {
     (async () => {
@@ -271,96 +339,509 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!url) throw new Error("Missing handoffUrl");
         await doHandoff(url, msg.opts || {});
         sendResponse({ ok: true });
-      } catch (e) { sendResponse({ ok: false, error: String(e?.message || e) }); }
+      } catch (e) { sendResponse({ ok:false, error:String(e?.message||e) }); }
     })(); return true;
   }
+
+  if (msg?.type === "INJECT_FROM_JSON") {
+    (async () => {
+      try { await doHandoffFromData(msg.session, msg.opts||{}); sendResponse({ ok:true }); }
+      catch (e) { sendResponse({ ok:false, error:String(e?.message||e) }); }
+    })(); return true;
+  }
+
   if (msg?.type === "CAPTURE_SESSION") {
     (async () => {
       try {
         const { tabId, serviceUrl, requestId } = msg;
-        if (!tabId || !serviceUrl || !requestId) throw new Error("Missing params");
+        if (!tabId||!serviceUrl||!requestId) throw new Error("Missing params");
         await captureCurrentSession(tabId, serviceUrl, requestId);
         await chrome.storage.local.remove(["pendingCaptureRequestId"]);
-        chrome.action.setBadgeText({ text: "" });
-        sendResponse({ ok: true });
-      } catch (e) { sendResponse({ ok: false, error: e.message }); }
+        chrome.action.setBadgeText({ text:"" });
+        sendResponse({ ok:true });
+      } catch (e) { sendResponse({ ok:false, error:e.message }); }
     })(); return true;
   }
+
   if (msg?.type === "START_OWNER_POLLING") {
     ownerStartPolling(msg.baseUrl, msg.jwt).catch(console.error);
-    sendResponse({ ok: true }); return true;
+    sendResponse({ ok:true }); return true;
   }
+
   if (msg?.type === "ASSISTED_START") {
     (async () => {
       try {
         const baseUrl = msg.baseUrl || (await chrome.storage.local.get(["baseUrl"])).baseUrl;
-        const jwt = msg.jwt || (await chrome.storage.local.get(["jwt"])).jwt;
-        if (!baseUrl || !jwt || !msg.shareToken) throw new Error("Missing params");
+        const jwt     = msg.jwt     || (await chrome.storage.local.get(["jwt"])).jwt;
+        if (!baseUrl||!jwt||!msg.shareToken) throw new Error("Missing params");
         await chrome.storage.local.set({ baseUrl, jwt });
-        ownerStartPolling(baseUrl, jwt).catch(() => {});
+        ownerStartPolling(baseUrl, jwt).catch(()=>{});
         const r = await assistedStartFlow(baseUrl, jwt, msg.shareToken);
-        sendResponse({ ok: true, requestId: r?.requestId });
-      } catch (e) { sendResponse({ ok: false, error: String(e?.message || e) }); }
+        sendResponse({ ok:true, requestId:r?.requestId });
+      } catch (e) { sendResponse({ ok:false, error:String(e?.message||e) }); }
     })(); return true;
   }
-  if (msg?.type === "INJECT_FROM_JSON") {
-    (async () => {
-      try { await doHandoffFromData(msg.session, msg.opts || {}); sendResponse({ ok: true }); }
-      catch (e) { sendResponse({ ok: false, error: String(e?.message || e) }); }
-    })(); return true;
-  }
+
   if (msg?.type === "CREATE_OWNER_HANDOFF_WITH_REQUEST") {
     (async () => {
       try {
         const { baseUrl, jwt, requestId, capture } = msg;
-        if (!baseUrl || !jwt || !requestId) throw new Error("Missing params");
+        if (!baseUrl||!jwt||!requestId) throw new Error("Missing params");
         const res = await fetch(`${baseUrl}/sharing/owner-handoff/from-capture`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-          body: JSON.stringify({ request_id: requestId, cookies: capture.cookies || [], localStorage: capture.localStorage || "{}", sessionStorage: capture.sessionStorage || "{}", current_url: capture.current_url || null, service_url: capture.service_url || null }),
+          method:"POST",
+          headers:{"Content-Type":"application/json", Authorization:`Bearer ${jwt}`},
+          body: JSON.stringify({ request_id:requestId, cookies:capture.cookies||[], localStorage:capture.localStorage||"{}", sessionStorage:capture.sessionStorage||"{}", current_url:capture.current_url||null, service_url:capture.service_url||null }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
         const out = await res.json();
         const handoffUrl = out.handoff_url ? `${baseUrl}${out.handoff_url}` : `${baseUrl}/sharing/handoff/${out.handoff_session_id}`;
-        sendResponse({ ok: true, handoffUrl, handoff_url: handoffUrl });
-      } catch (e) { sendResponse({ ok: false, error: String(e?.message || e) }); }
+        sendResponse({ ok:true, handoffUrl, handoff_url:handoffUrl });
+      } catch (e) { sendResponse({ ok:false, error:String(e?.message||e) }); }
     })(); return true;
   }
-  if (msg?.type === "OPEN_CONNECTED_PROFILE_BY_TOKEN") {
-    (async () => {
-      try {
-        const baseUrl = msg.baseUrl || (await chrome.storage.local.get(["baseUrl"])).baseUrl;
-        const jwt = msg.jwt || (await chrome.storage.local.get(["jwt"])).jwt;
-        const finalToken = (msg.finalToken || "").trim();
-        if (!baseUrl || !jwt || !finalToken) throw new Error("Missing params");
-        const r = await fetch(`${baseUrl}/sharing/final-capture/resolve/${encodeURIComponent(finalToken)}`, { method: "POST", headers: { Authorization: `Bearer ${jwt}` } });
-        if (!r.ok) throw new Error(`Resolve failed: ${r.status}`);
-        const resolved = await r.json();
-        await doHandoff(`${baseUrl}${resolved.handoff_url}`, msg.opts || {});
-        sendResponse({ ok: true, data: resolved });
-      } catch (e) { sendResponse({ ok: false, error: String(e?.message || e) }); }
-    })(); return true;
-  }
+
   if (msg?.type === "CREATE_HANDOFF_FROM_CAPTURE") {
     (async () => {
       try {
         const { baseUrl, jwt, capture } = msg;
         const r = await fetch(`${baseUrl}/sharing/create-handoff`, {
-          method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
-          body: JSON.stringify(capture),
+          method:"POST",
+          headers:{"Content-Type":"application/json", Authorization:`Bearer ${jwt}`},
+          body:JSON.stringify(capture),
         });
         if (!r.ok) throw new Error(await r.text());
         const out = await r.json();
-        sendResponse({ ok: true, handoff_url: out.handoff_url || `${baseUrl}/sharing/handoff/${out.handoff_session_id}` });
-      } catch (e) { sendResponse({ ok: false, error: String(e?.message || e) }); }
+        sendResponse({ ok:true, handoff_url: out.handoff_url||`${baseUrl}/sharing/handoff/${out.handoff_session_id}` });
+      } catch (e) { sendResponse({ ok:false, error:String(e?.message||e) }); }
+    })(); return true;
+  }
+
+  if (msg?.type === "OPEN_CONNECTED_PROFILE_BY_TOKEN") {
+    (async () => {
+      try {
+        const baseUrl = msg.baseUrl || (await chrome.storage.local.get(["baseUrl"])).baseUrl;
+        const jwt     = msg.jwt     || (await chrome.storage.local.get(["jwt"])).jwt;
+        if (!baseUrl||!jwt||!msg.finalToken) throw new Error("Missing params");
+        const r = await fetch(`${baseUrl}/sharing/final-capture/resolve/${encodeURIComponent(msg.finalToken)}`, { method:"POST", headers:{Authorization:`Bearer ${jwt}`} });
+        if (!r.ok) throw new Error(`Resolve ${r.status}`);
+        const resolved = await r.json();
+        await doHandoff(`${baseUrl}${resolved.handoff_url}`, msg.opts||{});
+        sendResponse({ ok:true, data:resolved });
+      } catch (e) { sendResponse({ ok:false, error:String(e?.message||e) }); }
     })(); return true;
   }
 });
 
+/* ─── Auto-start ─────────────────────────────────────────────────────── */
 (async () => {
-  const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
+  const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl","jwt"]);
   if (baseUrl && jwt) ownerStartPolling(baseUrl, jwt).catch(console.error);
 })();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+//functional with root mee 
+// /* =====================
+//  * ZKP Credential Sharing - Extension Background (fixed)
+//  * ========================= */
+
+// function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+// function originFromUrl(u) { try { const x = new URL(u); return `${x.protocol}//${x.host}/`; } catch { return u; } }
+// function hostFromUrl(u) { try { return new URL(u).hostname.toLowerCase(); } catch { return ""; } }
+// function normalizeDomain(d) { return (d || "").toLowerCase().replace(/^\./, ""); }
+// function domainMatches(cookieDomain, targetHost) {
+//   const cd = normalizeDomain(cookieDomain), h = normalizeDomain(targetHost);
+//   return cd === h || h.endsWith("." + cd) || cd.endsWith("." + h);
+// }
+// function waitForTabComplete(tabId, timeoutMs = 15000) {
+//   return new Promise((resolve) => {
+//     function done() { chrome.tabs.onUpdated.removeListener(onUpdated); resolve(); }
+//     function onUpdated(id, info) { if (id === tabId && info.status === "complete") done(); }
+//     chrome.tabs.onUpdated.addListener(onUpdated);
+//     setTimeout(done, timeoutMs);
+//   });
+// }
+// function safeParseJsonObject(s) {
+//   if (!s) return null;
+//   try { const o = JSON.parse(s); return o && typeof o === "object" ? o : null; } catch { return null; }
+// }
+// function normalizeSameSite(v) {
+//   if (!v) return "lax";
+//   const s = String(v).toLowerCase();
+//   if (s === "strict") return "strict";
+//   if (s === "none") return "no_restriction";
+//   return "lax";
+// }
+
+// async function setOneCookie(serviceOriginUrl, c, forcedDomain = null) {
+//   const domain = forcedDomain || c.domain;
+//   const details = {
+//     url: serviceOriginUrl, name: c.name, value: c.value,
+//     path: c.path || "/", httpOnly: !!c.httpOnly, secure: !!c.secure,
+//     sameSite: normalizeSameSite(c.sameSite),
+//   };
+//   if (domain) details.domain = domain;
+//   if (typeof c.expires === "number" && c.expires > 0) details.expirationDate = c.expires;
+//   try { return await chrome.cookies.set(details); } catch (e) { console.warn("cookie set failed:", c?.name, e?.message); }
+// }
+
+// async function injectStorageAndReload(tabId, localStorageObj, sessionStorageObj) {
+//   if (!localStorageObj && !sessionStorageObj) return;
+//   try {
+//     await chrome.scripting.executeScript({
+//       target: { tabId },
+//       func: (ls, ss) => {
+//         try {
+//           if (ls) for (const [k, v] of Object.entries(ls)) localStorage.setItem(k, v);
+//           if (ss) for (const [k, v] of Object.entries(ss)) sessionStorage.setItem(k, v);
+//         } catch (e) { console.error("Storage injection error:", e); }
+//       },
+//       args: [localStorageObj, sessionStorageObj],
+//     });
+//     await sleep(300);
+//     await chrome.tabs.reload(tabId);
+//   } catch (e) { console.warn("injectStorageAndReload failed:", e?.message); }
+// }
+
+// /* ─── CORE doHandoff ─────────────────────────────────────────────────────── */
+// async function doHandoff(handoffUrl, opts = {}) {
+//   console.log("[doHandoff] fetching:", handoffUrl);
+
+//   let data;
+//   // Try http first, fallback to https if it fails (handles localhost with SSL)
+//   const tryFetch = async (url) => {
+//     const res = await fetch(url, { method: "GET" });
+//     if (!res.ok) { const b = await res.text().catch(() => ""); throw new Error(`HTTP ${res.status}: ${b}`); }
+//     return res.json();
+//   };
+
+//   try {
+//     data = await tryFetch(handoffUrl);
+//   } catch (e) {
+//     const alt = handoffUrl.startsWith("http://")
+//       ? handoffUrl.replace("http://", "https://")
+//       : handoffUrl.replace("https://", "http://");
+//     console.warn("[doHandoff] primary fetch failed, trying:", alt, "-", e?.message);
+//     data = await tryFetch(alt);
+//   }
+
+//   const serviceUrl = data.service_url;
+//   if (!serviceUrl) throw new Error("handoff response missing service_url");
+
+//   // Determine final URL to open (clean login paths)
+//   let finalUrl = data.current_url || serviceUrl;
+//   try {
+//     const u = new URL(finalUrl);
+//     u.search = ""; u.hash = "";
+//     if (/\/(login|signin|auth|verify_otp|accounts)/i.test(u.pathname)) {
+//       finalUrl = `${u.protocol}//${u.host}/`;
+//     } else {
+//       finalUrl = u.toString();
+//     }
+//   } catch { finalUrl = serviceUrl; }
+//   console.log("[doHandoff] opening:", finalUrl);
+
+//   const cookies = data.cookies || [];
+//   const lsObj = safeParseJsonObject(data.localStorage);
+//   const ssObj = safeParseJsonObject(data.sessionStorage);
+//   const canonicalOrigin = originFromUrl(serviceUrl);
+//   const canonicalHost = hostFromUrl(serviceUrl);
+
+//   // 1. Inject cookies before opening tab
+//   for (const c of cookies) {
+//     if (!c.domain || domainMatches(c.domain, canonicalHost)) {
+//       await setOneCookie(canonicalOrigin, c);
+//       await sleep(80);
+//     }
+//   }
+//   await sleep(500);
+
+//   // 2. Open tab
+//   const tab = await chrome.tabs.create({ url: finalUrl, active: true });
+//   await waitForTabComplete(tab.id, 15000);
+
+//   // 3. Inject storage + reload
+//   await injectStorageAndReload(tab.id, lsObj, ssObj);
+//   await waitForTabComplete(tab.id, 10000);
+
+//   // 4. Re-inject cookies after reload (catches httpOnly)
+//   for (const c of cookies) {
+//     await setOneCookie(originFromUrl(finalUrl), c);
+//     await sleep(60);
+//   }
+//   console.log("[doHandoff] done");
+// }
+
+// async function doHandoffFromData(data, opts = {}) {
+//   const serviceUrl = data.service_url || data.current_url;
+//   const currentUrl = data.current_url || serviceUrl;
+//   if (!serviceUrl) throw new Error("session JSON missing service_url");
+//   const cookies = data.cookies || [];
+//   const lsObj = typeof data.localStorage === "string" ? safeParseJsonObject(data.localStorage) : (data.localStorage || null);
+//   const ssObj = typeof data.sessionStorage === "string" ? safeParseJsonObject(data.sessionStorage) : (data.sessionStorage || null);
+//   const canonicalOrigin = originFromUrl(serviceUrl);
+//   for (const c of cookies) { try { await setOneCookie(canonicalOrigin, c); } catch {} await sleep(80); }
+//   await sleep(500);
+//   const tab = await chrome.tabs.create({ url: currentUrl, active: true });
+//   await waitForTabComplete(tab.id, 15000);
+//   await injectStorageAndReload(tab.id, lsObj, ssObj);
+//   await waitForTabComplete(tab.id, 10000);
+// }
+
+// /* ─── API helpers ────────────────────────────────────────────────────────── */
+// async function apiGetJson(baseUrl, path, jwt) {
+//   const r = await fetch(`${baseUrl}${path}`, { headers: { Authorization: `Bearer ${jwt}` } });
+//   if (!r.ok) throw new Error(`GET ${path} failed: ${r.status} ${await r.text()}`);
+//   return r.json();
+// }
+// async function apiPostJson(baseUrl, path, jwt, body) {
+//   const r = await fetch(`${baseUrl}${path}`, {
+//     method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+//     body: JSON.stringify(body || {}),
+//   });
+//   if (!r.ok) throw new Error(`POST ${path} failed: ${r.status} ${await r.text()}`);
+//   return r.json();
+// }
+
+// /* ─── Assisted flow ──────────────────────────────────────────────────────── */
+// let assistedPollTimer = null;
+// async function assistedStartFlow(baseUrl, jwtToken, shareToken) {
+//   const created = await apiPostJson(baseUrl, "/sharing/assisted/request", jwtToken, { share_token: shareToken });
+//   const requestId = created.request_id;
+//   await chrome.storage.local.set({ assistedRequestId: requestId });
+//   if (assistedPollTimer) clearInterval(assistedPollTimer);
+//   assistedPollTimer = setInterval(async () => {
+//     try {
+//       const st = await apiGetJson(baseUrl, `/sharing/assisted/${encodeURIComponent(requestId)}/status`, jwtToken);
+//       if (st.status === "completed" && st.handoff_url) {
+//         clearInterval(assistedPollTimer); assistedPollTimer = null;
+//         await doHandoff(`${baseUrl}${st.handoff_url}`, {});
+//         if (chrome.notifications?.create)
+//           chrome.notifications.create({ type: "basic", iconUrl: "icon32.png", title: "Assisted Share Complete", message: "Connected profile opened." });
+//       }
+//     } catch (err) { console.error("Assisted poll error:", err); }
+//   }, 2000);
+// }
+
+// /* ─── Owner polling ──────────────────────────────────────────────────────── */
+// let ownerPollTimer = null;
+// const seenPending = new Set();
+// async function ownerStartPolling(baseUrl, jwtToken) {
+//   if (ownerPollTimer) return;
+//   ownerPollTimer = setInterval(async () => {
+//     try {
+//       const pending = await apiGetJson(baseUrl, "/sharing/assisted/pending", jwtToken);
+//       for (const item of pending) {
+//         if (seenPending.has(item.request_id)) continue;
+//         seenPending.add(item.request_id);
+//         if (chrome.notifications?.create)
+//           chrome.notifications.create(`assist:${item.request_id}`, { type: "basic", iconUrl: "icon32.png", title: "Assisted login request", message: `Access request for: ${item.service_url}`, priority: 2 });
+//       }
+//     } catch (e) {
+//       if (String(e?.message || e).includes("401")) { clearInterval(ownerPollTimer); ownerPollTimer = null; }
+//     }
+//   }, 5000);
+// }
+
+// if (chrome.notifications?.onClicked) {
+//   chrome.notifications.onClicked.addListener(async (notifId) => {
+//     if (!notifId.startsWith("assist:")) return;
+//     const requestId = notifId.slice("assist:".length);
+//     const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
+//     if (!baseUrl || !jwt) return;
+//     try {
+//       const resp = await apiPostJson(baseUrl, `/sharing/assisted/${encodeURIComponent(requestId)}/approve`, jwt, {});
+//       if (!resp.assist_login_url) throw new Error("missing assist_login_url");
+//       await chrome.tabs.create({ url: resp.assist_login_url, active: true });
+//       await chrome.storage.local.set({ pendingCaptureRequestId: requestId });
+//       chrome.action.setBadgeText({ text: "!" });
+//     } catch (e) { console.error("approve failed:", e); }
+//   });
+// }
+
+// /* ─── Session capture ────────────────────────────────────────────────────── */
+// async function captureCurrentSession(tabId, serviceUrl, requestId) {
+//   const cookies = await chrome.cookies.getAll({ url: serviceUrl });
+//   const validatedCookies = cookies.map((c) => ({
+//     name: c.name, value: c.value, domain: c.domain || new URL(serviceUrl).hostname,
+//     path: c.path || "/", expires: c.expirationDate || -1,
+//     httpOnly: c.httpOnly || false, secure: c.secure || false, sameSite: c.sameSite || "Lax",
+//   }));
+//   const exec = await chrome.scripting.executeScript({
+//     target: { tabId },
+//     func: () => {
+//       const ls = {}, ss = {};
+//       for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); ls[k] = localStorage.getItem(k); }
+//       for (let i = 0; i < sessionStorage.length; i++) { const k = sessionStorage.key(i); ss[k] = sessionStorage.getItem(k); }
+//       return { localStorage: ls, sessionStorage: ss };
+//     }
+//   });
+//   const { localStorage: ls, sessionStorage: ss } = exec[0].result;
+//   const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
+//   if (!jwt) throw new Error("No JWT");
+//   const r = await fetch(`${baseUrl}/sharing/assisted/${requestId}/session`, {
+//     method: "POST",
+//     headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+//     body: JSON.stringify({ cookies: validatedCookies, localStorage: JSON.stringify(ls), sessionStorage: JSON.stringify(ss), current_url: serviceUrl }),
+//   });
+//   if (!r.ok) throw new Error(`Submit session HTTP ${r.status}`);
+//   return r.json();
+// }
+
+// /* ─── Bridge URL intercept ───────────────────────────────────────────────── */
+// function isBridgeUrl(url) {
+//   try { const u = new URL(url); return u.pathname === "/extension/connect" && u.searchParams.has("handoff"); }
+//   catch { return false; }
+// }
+// chrome.webNavigation.onCommitted.addListener(async (details) => {
+//   if (details.frameId !== 0 || !isBridgeUrl(details.url)) return;
+//   const handoffUrl = new URL(details.url).searchParams.get("handoff");
+//   if (!handoffUrl) return;
+//   chrome.tabs.remove(details.tabId, () => { if (chrome.runtime.lastError) {} });
+//   try { await doHandoff(handoffUrl, {}); console.log("[bridge] success"); }
+//   catch (e) { console.error("[bridge] failed:", e); }
+// });
+
+// /* ─── Message router ─────────────────────────────────────────────────────── */
+// console.log("[BG] loaded");
+// chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+//   console.log("[BG] message:", msg?.type);
+
+//   if (msg?.type === "RUN_HANDOFF") {
+//     (async () => {
+//       try {
+//         const url = msg.handoffUrl || (await chrome.storage.local.get(["handoffUrl"])).handoffUrl;
+//         if (!url) throw new Error("Missing handoffUrl");
+//         await doHandoff(url, msg.opts || {});
+//         sendResponse({ ok: true });
+//       } catch (e) { sendResponse({ ok: false, error: String(e?.message || e) }); }
+//     })(); return true;
+//   }
+//   if (msg?.type === "CAPTURE_SESSION") {
+//     (async () => {
+//       try {
+//         const { tabId, serviceUrl, requestId } = msg;
+//         if (!tabId || !serviceUrl || !requestId) throw new Error("Missing params");
+//         await captureCurrentSession(tabId, serviceUrl, requestId);
+//         await chrome.storage.local.remove(["pendingCaptureRequestId"]);
+//         chrome.action.setBadgeText({ text: "" });
+//         sendResponse({ ok: true });
+//       } catch (e) { sendResponse({ ok: false, error: e.message }); }
+//     })(); return true;
+//   }
+//   if (msg?.type === "START_OWNER_POLLING") {
+//     ownerStartPolling(msg.baseUrl, msg.jwt).catch(console.error);
+//     sendResponse({ ok: true }); return true;
+//   }
+//   if (msg?.type === "ASSISTED_START") {
+//     (async () => {
+//       try {
+//         const baseUrl = msg.baseUrl || (await chrome.storage.local.get(["baseUrl"])).baseUrl;
+//         const jwt = msg.jwt || (await chrome.storage.local.get(["jwt"])).jwt;
+//         if (!baseUrl || !jwt || !msg.shareToken) throw new Error("Missing params");
+//         await chrome.storage.local.set({ baseUrl, jwt });
+//         ownerStartPolling(baseUrl, jwt).catch(() => {});
+//         const r = await assistedStartFlow(baseUrl, jwt, msg.shareToken);
+//         sendResponse({ ok: true, requestId: r?.requestId });
+//       } catch (e) { sendResponse({ ok: false, error: String(e?.message || e) }); }
+//     })(); return true;
+//   }
+//   if (msg?.type === "INJECT_FROM_JSON") {
+//     (async () => {
+//       try { await doHandoffFromData(msg.session, msg.opts || {}); sendResponse({ ok: true }); }
+//       catch (e) { sendResponse({ ok: false, error: String(e?.message || e) }); }
+//     })(); return true;
+//   }
+//   if (msg?.type === "CREATE_OWNER_HANDOFF_WITH_REQUEST") {
+//     (async () => {
+//       try {
+//         const { baseUrl, jwt, requestId, capture } = msg;
+//         if (!baseUrl || !jwt || !requestId) throw new Error("Missing params");
+//         const res = await fetch(`${baseUrl}/sharing/owner-handoff/from-capture`, {
+//           method: "POST",
+//           headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+//           body: JSON.stringify({ request_id: requestId, cookies: capture.cookies || [], localStorage: capture.localStorage || "{}", sessionStorage: capture.sessionStorage || "{}", current_url: capture.current_url || null, service_url: capture.service_url || null }),
+//         });
+//         if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+//         const out = await res.json();
+//         const handoffUrl = out.handoff_url ? `${baseUrl}${out.handoff_url}` : `${baseUrl}/sharing/handoff/${out.handoff_session_id}`;
+//         sendResponse({ ok: true, handoffUrl, handoff_url: handoffUrl });
+//       } catch (e) { sendResponse({ ok: false, error: String(e?.message || e) }); }
+//     })(); return true;
+//   }
+//   if (msg?.type === "OPEN_CONNECTED_PROFILE_BY_TOKEN") {
+//     (async () => {
+//       try {
+//         const baseUrl = msg.baseUrl || (await chrome.storage.local.get(["baseUrl"])).baseUrl;
+//         const jwt = msg.jwt || (await chrome.storage.local.get(["jwt"])).jwt;
+//         const finalToken = (msg.finalToken || "").trim();
+//         if (!baseUrl || !jwt || !finalToken) throw new Error("Missing params");
+//         const r = await fetch(`${baseUrl}/sharing/final-capture/resolve/${encodeURIComponent(finalToken)}`, { method: "POST", headers: { Authorization: `Bearer ${jwt}` } });
+//         if (!r.ok) throw new Error(`Resolve failed: ${r.status}`);
+//         const resolved = await r.json();
+//         await doHandoff(`${baseUrl}${resolved.handoff_url}`, msg.opts || {});
+//         sendResponse({ ok: true, data: resolved });
+//       } catch (e) { sendResponse({ ok: false, error: String(e?.message || e) }); }
+//     })(); return true;
+//   }
+//   if (msg?.type === "CREATE_HANDOFF_FROM_CAPTURE") {
+//     (async () => {
+//       try {
+//         const { baseUrl, jwt, capture } = msg;
+//         const r = await fetch(`${baseUrl}/sharing/create-handoff`, {
+//           method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+//           body: JSON.stringify(capture),
+//         });
+//         if (!r.ok) throw new Error(await r.text());
+//         const out = await r.json();
+//         sendResponse({ ok: true, handoff_url: out.handoff_url || `${baseUrl}/sharing/handoff/${out.handoff_session_id}` });
+//       } catch (e) { sendResponse({ ok: false, error: String(e?.message || e) }); }
+//     })(); return true;
+//   }
+// });
+
+// (async () => {
+//   const { baseUrl, jwt } = await chrome.storage.local.get(["baseUrl", "jwt"]);
+//   if (baseUrl && jwt) ownerStartPolling(baseUrl, jwt).catch(console.error);
+// })();
 
 
 
